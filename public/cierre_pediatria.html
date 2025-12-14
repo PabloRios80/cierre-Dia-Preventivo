@@ -10,17 +10,24 @@
 </head>
 <body class="bg-gray-50 flex flex-col min-h-screen font-sans">
 
-    <header class="bg-blue-600 text-white shadow-lg sticky top-0 z-50">
-        <div class="container mx-auto px-4 py-3">
-            <div class="flex justify-between items-center">
-                <div class="flex items-center space-x-4">
-                    <div class="bg-white rounded-full p-1 shadow-md">
-                        <img src="images/logo_iapos.png" alt="Logo IAPOS" class="h-12 w-auto">
+    <header class="bg-gradient-to-r from-blue-700 to-blue-600 text-white shadow-xl sticky top-0 z-50">
+        <div class="container mx-auto px-4 py-4"> <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-6">
+                    <div class="bg-white rounded-xl p-2 shadow-lg transform hover:scale-105 transition duration-300">
+                        <img src="images/logo_iapos.png" alt="Logo IAPOS" class="h-14 md:h-16 w-auto"> 
                     </div>
-                    <h1 class="text-xl md:text-2xl font-bold tracking-tight">Cierre Día Preventivo <span class="text-yellow-300">Pediatría</span></h1>
+                    <div>
+                        <h1 class="text-2xl md:text-3xl font-bold tracking-tight text-white drop-shadow-md">
+                            Cierre Día Preventivo
+                        </h1>
+                        <span class="text-yellow-300 font-semibold text-lg tracking-wide uppercase">Pediatría</span>
+                    </div>
                 </div>
                 <div>
-                    <a href="/" class="text-white hover:text-blue-200 text-sm font-medium"><i class="fas fa-home mr-1"></i> Volver</a>
+                    <a href="/" class="group flex items-center bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg transition border border-white/20 backdrop-blur-sm">
+                        <i class="fas fa-home mr-2 group-hover:text-yellow-300 transition"></i> 
+                        <span class="font-medium">Volver</span>
+                    </a>
                 </div>
             </div>
         </div>
@@ -96,7 +103,7 @@
                         </div>
                         <div>
                             <label class="block text-xs font-bold text-gray-500 uppercase">Fecha Cierre</label>
-                            <input type="date" id="fecha-cierre-input" name="FECHA" class="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-400 focus:outline-none">
+                            <input type="date" id="fecha-cierre-input" name="FECHA" readonly class="w-full bg-gray-200 border border-gray-300 rounded px-3 py-2 text-gray-600 font-bold focus:outline-none cursor-not-allowed">
                         </div>
                         <input type="hidden" id="profesional-input" name="Profesional">
                     </div>

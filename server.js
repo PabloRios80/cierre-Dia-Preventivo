@@ -243,7 +243,8 @@ app.post('/api/enfermeria/guardar', async (req, res) => {
         res.status(500).json({ message: 'Error interno del servidor.' });
     }
 });
-// --- RUTA DE GUARDADO CORREGIDA (CON SEPARACIÓN DE NOMBRE/APELLIDO) ---
+
+// --- RUTA DE GUARDADO CORREGIDA (SINCRONIZADA CON EL FRONTEND) ---
 app.post('/api/cierre-pediatria/guardar', async (req, res) => {
     if (!req.isAuthenticated()) {
         return res.status(401).json({ success: false, error: "Usuario no autenticado." });
@@ -262,113 +263,93 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
         const formData = req.body;
         const nombreProfesional = req.user.displayName || formData['Profesional'] || 'Desconocido';
 
-        // LÓGICA PARA SEPARAR APELLIDO Y NOMBRE
-        // El frontend envía "Apellido Nombre" junto. Aquí intentamos separarlo.
-        // Asumimos que la primera palabra es el Apellido y el resto es el Nombre.
+        // SEPARAR NOMBRE Y APELLIDO
         const nombreCompleto = (formData['Apellido_Nombre'] || '').trim();
         const primerEspacio = nombreCompleto.indexOf(' ');
-        
         let apellido = nombreCompleto;
         let nombre = '';
-
         if (primerEspacio > 0) {
             apellido = nombreCompleto.substring(0, primerEspacio);
             nombre = nombreCompleto.substring(primerEspacio + 1);
         }
 
-        // OBJETO FINAL PARA GOOGLE SHEETS
+        // --- MAPEO EXACTO ---
+        // Lado Izquierdo: Nombre de columna en Google Sheet
+        // Lado Derecho: Nombre del campo que viene del Frontend (AHORA CON ESPACIOS)
         const newRow = {
             'Efector': formData['Efector'] || '',
             'DNI': formData['DNI'] || '',
-            
-            // Aquí van separados:
             'Apellido': apellido, 
             'Nombre': nombre,
-
-            'FECHA': formData['FECHA'] || formData['Fecha_cierre_input'] || new Date().toLocaleDateString('es-AR'),
+            'FECHA': formData['FECHA'] || new Date().toLocaleDateString('es-AR'),
             'Edad': formData['Edad'] || '',
             'Sexo': formData['Sexo'] || '',
             'Profesional': nombreProfesional,
 
             // Signos Vitales
-            'Presión Arterial': formData['Presión_Arterial'] || '',
-            'Observaciones - Presión Arterial': formData['Observaciones___Presión_Arterial'] || '',
-            
+            'Presión Arterial': formData['Presión Arterial'] || '',
+            'Observaciones - Presión Arterial': formData['Observaciones - Presión Arterial'] || '',
             'IMC': formData['IMC'] || '',
-            'Observaciones - IMC': formData['Observaciones___IMC'] || '',
+            'Observaciones - IMC': formData['Observaciones - IMC'] || '',
+            'Alimentación saludable': formData['Alimentación saludable'] || '',
+            'Observaciones - Alimentación saludable': formData['Observaciones - Alimentación saludable'] || '',
             
-            'Alimentación saludable': formData['Alimentación_saludable'] || '',
-            'Observaciones - Alimentación saludable': formData['Observaciones___Alimentación_saludable'] || '',
-            
-            'Actividad física': formData['Actividad_física'] || '',
-            'Observaciones - Actividad física': formData['Observaciones___Actividad_física'] || '',
-            
-            'Seguridad vial': formData['Seguridad_vial'] || '',
-            'Observaciones - Seguridad vial': formData['Observaciones___Seguridad_vial'] || '',
-            
+            // Hábitos
+            'Actividad física': formData['Actividad física'] || '',
+            'Observaciones - Actividad física': formData['Observaciones - Actividad física'] || '',
+            'Seguridad vial': formData['Seguridad vial'] || '',
+            'Observaciones - Seguridad vial': formData['Observaciones - Seguridad vial'] || '',
             'Tabaco': formData['Tabaco'] || '',
-            'Observaciones - Tabaco': formData['Observaciones___Tabaco'] || '',
-            
+            'Observaciones - Tabaco': formData['Observaciones - Tabaco'] || '',
             'Violencia': formData['Violencia'] || '',
-            'Observaciones - Violencia': formData['Observaciones___Violencia'] || '',
+            'Observaciones - Violencia': formData['Observaciones - Violencia'] || '',
 
             // Examen Físico
-            'Examen Fisico': formData['Examen_Fisico'] || '',
-            'Observaciones - Examen Fisico': formData['Observaciones___Examen_Fisico'] || '',
-            
+            'Examen Fisico': formData['Examen Fisico'] || '',
+            'Observaciones - Examen Fisico': formData['Observaciones - Examen Fisico'] || '',
             'Talla': formData['Talla'] || '',
-            'Observaciones - Talla': formData['Observaciones___Talla'] || '',
-            
-            'Salud Ocular': formData['Salud_Ocular'] || '',
-            'Observaciones - Salud Ocular': formData['Observaciones___Salud_Ocular'] || '',
-            
+            'Observaciones - Talla': formData['Observaciones - Talla'] || '',
+            'Salud Ocular': formData['Salud Ocular'] || '',
+            'Observaciones - Salud Ocular': formData['Observaciones - Salud Ocular'] || '',
             'Audición': formData['Audición'] || '',
-            'Observaciones - Audición': formData['Observaciones___Audición'] || '',
-            
-            'Salud Cardiovascular': formData['Salud_Cardiovascular'] || '',
-            'Observaciones - Salud Cardiovascular': formData['Observaciones___Salud_Cardiovascular'] || '',
+            'Observaciones - Audición': formData['Observaciones - Audición'] || '',
+            'Salud Cardiovascular': formData['Salud Cardiovascular'] || '',
+            'Observaciones - Salud Cardiovascular': formData['Observaciones - Salud Cardiovascular'] || '',
 
             // Salud Mental
-            'Educación sexual': formData['Educación_sexual'] || '',
-            'Observaciones - Educación sexual': formData['Observaciones___Educación_sexual'] || '',
-            
-            'Salud Mental Integral': formData['Salud_Mental_Integral'] || '',
-            'Observaciones - Salud Mental': formData['Observaciones___Salud_Mental'] || '',
-            
-            'Consumo de sustancias problemáticas': formData['Consumo_de_sustancias_problemáticas'] || '',
-            'Observaciones - Consumo de sustancias': formData['Observaciones___Consumo_de_sustancias'] || '',
+            'Educación sexual': formData['Educación sexual'] || '',
+            'Observaciones - Educación sexual': formData['Observaciones - Educación sexual'] || '',
+            'Salud Mental Integral': formData['Salud Mental Integral'] || '',
+            'Observaciones - Salud Mental': formData['Observaciones - Salud Mental'] || '',
+            'Consumo de sustancias problemáticas': formData['Consumo de sustancias problemáticas'] || '',
+            'Observaciones - Consumo de sustancias': formData['Observaciones - Consumo de sustancias'] || '',
             
             // Patologías
-            'Pesquisa de Dislipemia': formData['Pesquisa_de_Dislipemia'] || '',
-            'Observaciones - Dislipemia': formData['Observaciones___Dislipemia'] || '',
-            
-            'Síndrome Metabólico': formData['Síndrome_Metabólico'] || '',
-            'Observaciones - Síndrome Metabólico': formData['Observaciones___Síndrome_Metabólico'] || '',
-            
+            'Pesquisa de Dislipemia': formData['Pesquisa de Dislipemia'] || '',
+            'Observaciones - Dislipemia': formData['Observaciones - Dislipemia'] || '',
+            'Síndrome Metabólico': formData['Síndrome Metabólico'] || '',
+            'Observaciones - Síndrome Metabólico': formData['Observaciones - Síndrome Metabólico'] || '',
             'Escoliosis': formData['Escoliosis'] || '',
-            'Observaciones - Escoliosis': formData['Observaciones___Escoliosis'] || '',
+            'Observaciones - Escoliosis': formData['Observaciones - Escoliosis'] || '',
             
             // Cáncer
-            'Cáncer cérvico uterino': formData['Cáncer_cérvico_uterino'] || '',
-            'Observaciones - Cáncer cérvico uterino': formData['Observaciones___Cáncer_cérvico_uterino'] || '',
-            
-            'Cáncer de piel': formData['Cáncer_de_piel'] || '',
-            'Observaciones - Cáncer de piel': formData['Observaciones___Cáncer_de_piel'] || '',
+            'Cáncer cérvico uterino': formData['Cáncer cérvico uterino'] || '',
+            'Observaciones - Cáncer cérvico uterino': formData['Observaciones - Cáncer cérvico uterino'] || '',
+            'Cáncer de piel': formData['Cáncer de piel'] || '',
+            'Observaciones - Cáncer de piel': formData['Observaciones - Cáncer de piel'] || '',
 
             // Desarrollo
-            'Desarrollo escolar y aprendizaje': formData['Desarrollo_escolar_y_aprendizaje'] || '',
-            'Observaciones - Desarrollo escolar': formData['Observaciones___Desarrollo_escolar'] || '',
-            
-            'Uso de pantallas': formData['Uso_de_pantallas'] || '',
-            'Cantidad de horas diarias': formData['Cantidad_de_horas_diarias'] || '',
-            'Observaciones - Uso de pantallas': formData['Observaciones___Uso_de_pantallas'] || '',
+            'Desarrollo escolar y aprendizaje': formData['Desarrollo escolar y aprendizaje'] || '',
+            'Observaciones - Desarrollo escolar': formData['Observaciones - Desarrollo escolar'] || '',
+            'Uso de pantallas': formData['Uso de pantallas'] || '',
+            'Cantidad de horas diarias': formData['Cantidad de horas diarias'] || '',
+            'Observaciones - Uso de pantallas': formData['Observaciones - Uso de pantallas'] || '',
             
             // Controles
-            'Control de vacunas de calendario': formData['Control_de_vacunas_de_calendario'] || '',
-            'Observaciones - Vacunas': formData['Observaciones___Vacunas'] || '',
-            
-            'Control Odontológico - Niños': formData['Control_Odontológico___Niños'] || '',
-            'Observaciones - Control Odontológico': formData['Observaciones___Control_Odontológico'] || '',
+            'Control de vacunas de calendario': formData['Control de vacunas de calendario'] || '',
+            'Observaciones - Vacunas': formData['Observaciones - Vacunas'] || '',
+            'Control Odontológico - Niños': formData['Control Odontológico - Niños'] || '',
+            'Observaciones - Control Odontológico': formData['Observaciones - Control Odontológico'] || '',
             
             'Fecha_Carga_Sistema': new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
         };
