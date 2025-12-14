@@ -17,18 +17,82 @@ setInterval(() => {
     }
 }, 30000);
 
+
+const express = require('express');
+const path = require('path');
+const { GoogleSpreadsheet } = require('google-spreadsheet');
+const { google } = require('googleapis');
+const app = express();
+const PORT = process.env.PORT || 3000;
+const SPREADSHEET_ID = '15YPfBG9PBfN3nBW5xXJYjIXEgYIS9z71pI0VpeCtAAU';
+// >>>>> CAMBIO 1: AGREGAR ID PARA IAPOS <<<<<
+const IAPOS_SPREADSHEET_ID = '1-bhfGB0FqGqWv_fIxPL4eN89o30F-BGZj6loLw3lTzg';
+
+const API_BASE_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+
+
+// --- VARIABLES GLOBALES PARA LOS DOCUMENTOS ---
+let doc; 
+let credentials;     // Documento principal de Pacientes
+let iaposDoc; // Nuevo documento para IAPOS
+let isSheetsReady = false;
+
+
+// Manejo de errores no capturados
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// >>>>> AGREGAR TODO ESTO AQUÍ ABAJO <<<<<
+const session = require('express-session');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+
+
 // ====================================================================
-// FUNCIÓN HIPER-OPTIMIZADA PARA GOOGLE SHEETS
+// FUNCIONES DE CONEXIÓN Y UTILIDAD (Credenciales de Service Account)
 // ====================================================================
-async function getUltraOptimizedSheetData(sheetIdentifier, filters = {}) {
-    if (!doc) throw new Error('Google Sheet not initialized');
+
+/**
+ * Obtiene y procesa las credenciales del Service Account desde las variables de entorno 
+ * (GOOGLE_CLIENT_EMAIL y GOOGLE_PRIVATE_KEY).
+ */
+async function getClientCredentials() {
+    // Busca las credenciales en el entorno de Render (o local)
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY ? 
+                       // Reemplaza la secuencia de escape para que funcione con Node.js
+                        process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
+
+    if (clientEmail && privateKey) {
+        return {
+            client_email: clientEmail,
+            private_key: privateKey,
+        };
+    } else {
+        // Este error indica que faltan las credenciales para la cuenta de servicio,
+        // lo que impide la conexión a Google Sheets.
+        throw new Error('Credenciales de Google Service Account (email/key) no configuradas en el entorno. Asegúrese de definir GOOGLE_CLIENT_EMAIL y GOOGLE_PRIVATE_KEY.');
+    }
+}
+
+
+// >>>>> CAMBIO 4: ACEPTA UN ARGUMENTO OPCIONAL DE DOCUMENTO <<<<<
+// Por defecto, usa el documento principal (doc)
+async function getUltraOptimizedSheetData(docToUse = doc, sheetIdentifier, filters = {}) {
+    if (!docToUse) throw new Error('Google Sheet no inicializado. El documento no existe.');
     
     let sheet;
-    if (typeof sheetIdentifier === 'string') sheet = doc.sheetsByTitle[sheetIdentifier];
-    else if (typeof sheetIdentifier === 'number') sheet = doc.sheetsByIndex[sheetIdentifier];
+    // La lógica de búsqueda de hoja no cambia
+    if (typeof sheetIdentifier === 'string') sheet = docToUse.sheetsByTitle[sheetIdentifier];
+    else if (typeof sheetIdentifier === 'number') sheet = docToUse.sheetsByIndex[sheetIdentifier];
     
     if (!sheet) {
-        console.warn(`Hoja "${sheetIdentifier}" no encontrada`);
+        console.warn(`Hoja "${sheetIdentifier}" no encontrada en el documento`);
         return [];
     }
 
@@ -56,28 +120,14 @@ async function getUltraOptimizedSheetData(sheetIdentifier, filters = {}) {
         });
 }
 
-// Manejo de errores no capturados
-process.on('uncaughtException', (error) => {
-    console.error('Uncaught Exception:', error);
-});
 
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
+// --- CONFIGURACIÓN DE MIDDLEWARE GENERAL ---
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-const express = require('express');
-const path = require('path');
-const { GoogleSpreadsheet } = require('google-spreadsheet');
-const { google } = require('googleapis');
-const app = express();
-const PORT = process.env.PORT || 3000;
-const SPREADSHEET_ID = '15YPfBG9PBfN3nBW5xXJYjIXEgYIS9z71pI0VpeCtAAU';
-const API_BASE_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+app.use(express.static('public')); // Sirve archivos estáticos desde la carpeta 'public'
 
-// >>>>> AGREGAR TODO ESTO AQUÍ ABAJO <<<<<
-const session = require('express-session');
-const passport = require('passport');
-const GoogleStrategy = require('passport-google-oauth20').Strategy;
+
 
 // --- CONFIGURACIÓN DE MIDDLEWARE PARA AUTENTICACIÓN ---
 app.use(session({
@@ -129,6 +179,16 @@ passport.deserializeUser((obj, done) => {
     done(null, obj);
 });
 
+// Middleware para verificar autenticación
+function ensureAuthenticated(req, res, next) {
+    if (req.isAuthenticated()) {
+        return next();
+    }
+    // Redirige a la página de login si no está autenticado
+    res.redirect(`/login.html?returnTo=${encodeURIComponent(req.originalUrl)}`);
+}
+
+
 // Agrega esta nueva ruta en tu server.js, junto a tus otras rutas.
 // Asegúrate de que esta ruta esté antes de app.use(express.static('public')).
 app.get('/cierre-formulario.html', (req, res) => {
@@ -151,17 +211,11 @@ app.get('/consultas.html', (req, res) => {
     }
 });
 // --- MIDDLEWARE ---
-app.use(express.json());
-app.use(express.static('public')); // Sirve archivos estáticos desde la carpeta 'public'
-
 // Nueva ruta para que el frontend obtenga la URL base de la API
 app.get('/api/config', (req, res) => {
     res.json({ apiBaseUrl: API_BASE_URL });
 });
 
-// --- VARIABLES GLOBALES ---
-let doc;
-let credentials;
 
 // Iniciar el servidor
 app.listen(PORT, () => {
@@ -189,7 +243,144 @@ app.post('/api/enfermeria/guardar', async (req, res) => {
         res.status(500).json({ message: 'Error interno del servidor.' });
     }
 });
+// --- RUTA DE GUARDADO CORREGIDA (CON SEPARACIÓN DE NOMBRE/APELLIDO) ---
+app.post('/api/cierre-pediatria/guardar', async (req, res) => {
+    if (!req.isAuthenticated()) {
+        return res.status(401).json({ success: false, error: "Usuario no autenticado." });
+    }
 
+    try {
+        if (!doc) await initializeGoogleSheet();
+        
+        const SHEET_TITLE = 'cierre_pediatria';
+        const sheet = doc.sheetsByTitle[SHEET_TITLE];
+
+        if (!sheet) {
+            return res.status(500).json({ success: false, error: `La pestaña "${SHEET_TITLE}" no existe.` });
+        }
+
+        const formData = req.body;
+        const nombreProfesional = req.user.displayName || formData['Profesional'] || 'Desconocido';
+
+        // LÓGICA PARA SEPARAR APELLIDO Y NOMBRE
+        // El frontend envía "Apellido Nombre" junto. Aquí intentamos separarlo.
+        // Asumimos que la primera palabra es el Apellido y el resto es el Nombre.
+        const nombreCompleto = (formData['Apellido_Nombre'] || '').trim();
+        const primerEspacio = nombreCompleto.indexOf(' ');
+        
+        let apellido = nombreCompleto;
+        let nombre = '';
+
+        if (primerEspacio > 0) {
+            apellido = nombreCompleto.substring(0, primerEspacio);
+            nombre = nombreCompleto.substring(primerEspacio + 1);
+        }
+
+        // OBJETO FINAL PARA GOOGLE SHEETS
+        const newRow = {
+            'Efector': formData['Efector'] || '',
+            'DNI': formData['DNI'] || '',
+            
+            // Aquí van separados:
+            'Apellido': apellido, 
+            'Nombre': nombre,
+
+            'FECHA': formData['FECHA'] || formData['Fecha_cierre_input'] || new Date().toLocaleDateString('es-AR'),
+            'Edad': formData['Edad'] || '',
+            'Sexo': formData['Sexo'] || '',
+            'Profesional': nombreProfesional,
+
+            // Signos Vitales
+            'Presión Arterial': formData['Presión_Arterial'] || '',
+            'Observaciones - Presión Arterial': formData['Observaciones___Presión_Arterial'] || '',
+            
+            'IMC': formData['IMC'] || '',
+            'Observaciones - IMC': formData['Observaciones___IMC'] || '',
+            
+            'Alimentación saludable': formData['Alimentación_saludable'] || '',
+            'Observaciones - Alimentación saludable': formData['Observaciones___Alimentación_saludable'] || '',
+            
+            'Actividad física': formData['Actividad_física'] || '',
+            'Observaciones - Actividad física': formData['Observaciones___Actividad_física'] || '',
+            
+            'Seguridad vial': formData['Seguridad_vial'] || '',
+            'Observaciones - Seguridad vial': formData['Observaciones___Seguridad_vial'] || '',
+            
+            'Tabaco': formData['Tabaco'] || '',
+            'Observaciones - Tabaco': formData['Observaciones___Tabaco'] || '',
+            
+            'Violencia': formData['Violencia'] || '',
+            'Observaciones - Violencia': formData['Observaciones___Violencia'] || '',
+
+            // Examen Físico
+            'Examen Fisico': formData['Examen_Fisico'] || '',
+            'Observaciones - Examen Fisico': formData['Observaciones___Examen_Fisico'] || '',
+            
+            'Talla': formData['Talla'] || '',
+            'Observaciones - Talla': formData['Observaciones___Talla'] || '',
+            
+            'Salud Ocular': formData['Salud_Ocular'] || '',
+            'Observaciones - Salud Ocular': formData['Observaciones___Salud_Ocular'] || '',
+            
+            'Audición': formData['Audición'] || '',
+            'Observaciones - Audición': formData['Observaciones___Audición'] || '',
+            
+            'Salud Cardiovascular': formData['Salud_Cardiovascular'] || '',
+            'Observaciones - Salud Cardiovascular': formData['Observaciones___Salud_Cardiovascular'] || '',
+
+            // Salud Mental
+            'Educación sexual': formData['Educación_sexual'] || '',
+            'Observaciones - Educación sexual': formData['Observaciones___Educación_sexual'] || '',
+            
+            'Salud Mental Integral': formData['Salud_Mental_Integral'] || '',
+            'Observaciones - Salud Mental': formData['Observaciones___Salud_Mental'] || '',
+            
+            'Consumo de sustancias problemáticas': formData['Consumo_de_sustancias_problemáticas'] || '',
+            'Observaciones - Consumo de sustancias': formData['Observaciones___Consumo_de_sustancias'] || '',
+            
+            // Patologías
+            'Pesquisa de Dislipemia': formData['Pesquisa_de_Dislipemia'] || '',
+            'Observaciones - Dislipemia': formData['Observaciones___Dislipemia'] || '',
+            
+            'Síndrome Metabólico': formData['Síndrome_Metabólico'] || '',
+            'Observaciones - Síndrome Metabólico': formData['Observaciones___Síndrome_Metabólico'] || '',
+            
+            'Escoliosis': formData['Escoliosis'] || '',
+            'Observaciones - Escoliosis': formData['Observaciones___Escoliosis'] || '',
+            
+            // Cáncer
+            'Cáncer cérvico uterino': formData['Cáncer_cérvico_uterino'] || '',
+            'Observaciones - Cáncer cérvico uterino': formData['Observaciones___Cáncer_cérvico_uterino'] || '',
+            
+            'Cáncer de piel': formData['Cáncer_de_piel'] || '',
+            'Observaciones - Cáncer de piel': formData['Observaciones___Cáncer_de_piel'] || '',
+
+            // Desarrollo
+            'Desarrollo escolar y aprendizaje': formData['Desarrollo_escolar_y_aprendizaje'] || '',
+            'Observaciones - Desarrollo escolar': formData['Observaciones___Desarrollo_escolar'] || '',
+            
+            'Uso de pantallas': formData['Uso_de_pantallas'] || '',
+            'Cantidad de horas diarias': formData['Cantidad_de_horas_diarias'] || '',
+            'Observaciones - Uso de pantallas': formData['Observaciones___Uso_de_pantallas'] || '',
+            
+            // Controles
+            'Control de vacunas de calendario': formData['Control_de_vacunas_de_calendario'] || '',
+            'Observaciones - Vacunas': formData['Observaciones___Vacunas'] || '',
+            
+            'Control Odontológico - Niños': formData['Control_Odontológico___Niños'] || '',
+            'Observaciones - Control Odontológico': formData['Observaciones___Control_Odontológico'] || '',
+            
+            'Fecha_Carga_Sistema': new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
+        };
+
+        await sheet.addRow(newRow);
+        res.json({ success: true, message: "Ficha pediátrica guardada exitosamente." });
+
+    } catch (error) {
+        console.error("Error al guardar cierre pediatría:", error);
+        res.status(500).json({ success: false, error: "Error interno al guardar.", details: error.message });
+    }
+});
 // Función para inicializar el documento de Google Sheet y cargar su información (SOLO UNA VEZ)
 async function initializeGoogleSheet() {
     try {
@@ -213,6 +404,26 @@ async function initializeGoogleSheet() {
     }
 }
 
+
+// >>>>> CAMBIO 3: NUEVA FUNCIÓN DE INICIALIZACIÓN PARA IAPOS <<<<<
+async function initializeIaposSheet() {
+    try {
+        iaposDoc = new GoogleSpreadsheet(IAPOS_SPREADSHEET_ID, await getClientCredentials());
+        await iaposDoc.loadInfo(); // Carga la metadata del archivo de IAPOS
+        console.log(`Documento IAPOS cargado: "${iaposDoc.title}"`);
+    } catch (error) {
+        console.error('Error al inicializar el documento IAPOS:', error.message);
+        // Si falla, el servidor sigue vivo, pero las búsquedas de IAPOS fallarán.
+    }
+}
+
+
+// Inicialización de ambos Sheets (Ejecutar en app.listen)
+async function initializeAllSheets() {
+    await initializeGoogleSheet();
+    await initializeIaposSheet(); // <-- Inicializa el documento IAPOS
+    isSheetsReady = true;
+}
 
 // Función para obtener todos los datos de una hoja específica (por nombre o índice)
 // Usaremos esta función para ambas: la hoja principal y las hojas de estudios.
@@ -366,6 +577,42 @@ app.post('/buscar', async (req, res) => {
 
             return dateB.getTime() - dateA.getTime(); 
         });
+
+        // ====================================================================
+// RUTA NUEVA PARA LA HOJA IAPOS
+// ====================================================================
+
+// Ruta para buscar registros en la hoja específica "hoja_iapos"
+app.post('/api/iapos/buscar', async (req, res) => {
+    try {
+        const dniABuscar = String(req.body.dni).trim();
+        const NOMBRE_HOJA = "hoja_iapos";
+        
+        // Usamos la función optimizada, pasando el nombre de la hoja y el filtro DNI
+        const resultadosIapos = await getUltraOptimizedSheetData(NOMBRE_HOJA, { dni: dniABuscar });
+
+        if (resultadosIapos.length === 0) {
+            console.log(`SERVER (${NOMBRE_HOJA}): DNI ${dniABuscar} no encontrado.`);
+            return res.json({ error: `DNI no encontrado en la hoja ${NOMBRE_HOJA}.` });
+        }
+
+        console.log(`SERVER (${NOMBRE_HOJA}): DNI ${dniABuscar} encontrado. Enviando ${resultadosIapos.length} registros.`);
+
+        // Por defecto, devolvemos el array completo de resultados encontrados
+        res.json({
+            registrosIapos: resultadosIapos,
+            // Si necesitas el primer registro como principal:
+            registroPrincipal: resultadosIapos[0] 
+        });
+
+    } catch (error) {
+        console.error(`Error en servidor al buscar paciente IAPOS en ${NOMBRE_HOJA} por DNI:`, error);
+        res.status(500).json({
+            error: `Error interno del servidor al buscar en ${NOMBRE_HOJA}`,
+            details: error.message
+        });
+    }
+});
 
         // El primer elemento es el más reciente (el que se mostrará como principal)
         const pacientePrincipal = resultadosParaDNI[0];
@@ -525,6 +772,22 @@ app.get('/api/user', (req, res) => {
         });
     }
 });
+// Ruta para servir el HTML de Cierre Pediatría
+app.get('/cierre-pediatria', (req, res) => {
+    // Verificar si el usuario ya inició sesión
+    if (req.isAuthenticated()) {
+        // Si el archivo está en la misma carpeta que server.js:
+        res.sendFile(path.join(__dirname, 'cierre_pediatria.html'));
+        
+        // OJO: Si moviste el archivo a la carpeta 'public', usa esta línea en su lugar:
+        // res.sendFile(path.join(__dirname, 'public', 'cierre_pediatria.html'));
+    } else {
+        // Si NO está logueado, redirigir al login de Google
+        // y configurar para que vuelva a esta página al terminar
+        res.redirect('/auth/google?returnTo=/cierre-pediatria');
+    }
+});
+
 // ====================================================================
 // NUEVA RUTA - OBTENER ESTUDIOS COMPLEMENTARIOS POR DNI
 // ====================================================================
@@ -553,7 +816,7 @@ app.post('/obtener-estudios-paciente', async (req, res) => {
             'Oftalmologia'
         ];
 
-        // >>>>>>>> NUEVO: Definición de campos específicos para la hoja de Laboratorio <<<<<<<<
+        // >>>>>>>> NUEVO: Definición de campos específicos para     la hoja de Laboratorio <<<<<<<<
         // ESTOS DEBEN COINCIDIR EXACTAMENTE CON LOS ENCABEZADOS DE LAS COLUMNAS EN TU HOJA 'Laboratorio'
         const camposLaboratorio = [
             'Glucemia',
@@ -682,6 +945,49 @@ app.post('/obtener-estudios-paciente', async (req, res) => {
         // Esto capturará errores fatales fuera del bucle de hojas
         console.error('❌ Error fatal al obtener estudios del paciente:', error);
         res.status(500).json({ error: 'Error interno del servidor al obtener estudios.' });
+    }
+});
+
+// ====================================================================
+// NUEVA RUTA: OBTENER ESTUDIOS ESPECÍFICOS (SOLUCIÓN ERROR 404 PEDIATRÍA)
+// ====================================================================
+app.get('/api/estudios/:dni/:tipo', async (req, res) => {
+    try {
+        const { dni, tipo } = req.params;
+        
+        // Mapeo: Nombre que envía el botón -> Nombre exacto de la pestaña en Google Sheets
+        const mapaPestanas = {
+            'Enfermeria': 'Enfermeria',
+            'Laboratorio': 'Laboratorio',
+            'Odontologia': 'Odontologia',
+            'Biopsia': 'Biopsia',
+            'VCC': 'VCC',
+            'Mamografia': 'Mamografia',
+            'Eco mamaria': 'Eco mamaria',
+            'Espirometria': 'Espirometria',
+            'Ecografia': 'Ecografia',
+            'Densitometria': 'Densitometria'
+        };
+
+        const nombreRealPestana = mapaPestanas[tipo];
+
+        if (!nombreRealPestana) {
+            return res.status(400).json({ success: false, error: `Tipo de estudio '${tipo}' no configurado.` });
+        }
+
+        // Reutilizamos tu función existente para leer la hoja
+        const datosHoja = await getDataFromSpecificSheet(nombreRealPestana);
+
+        // Filtramos por DNI
+        const estudiosEncontrados = datosHoja.filter(fila => 
+            String(fila['DNI'] || '').trim() === String(dni).trim()
+        );
+
+        res.json({ success: true, data: estudiosEncontrados });
+
+    } catch (error) {
+        console.error(`Error al buscar estudios de ${req.params.tipo}:`, error);
+        res.status(500).json({ success: false, error: "Error interno al buscar estudios." });
     }
 });
 
@@ -909,13 +1215,29 @@ app.post('/guardar-consulta', async (req, res) => {
 // INICIO DEL SERVIDOR
 // ====================================================================
 
+// Función que inicializa AMBOS Sheets secuencialmente
+async function initializeAllSheets() {
+    try {
+        await initializeGoogleSheet(); // Inicializa doc (Pacientes)
+        await initializeIaposSheet(); // Inicializa iaposDoc (IAPOS)
+        isSheetsReady = true;
+        console.log('✅ Ambos documentos de Google Sheets inicializados correctamente.');
+    } catch (error) {
+        console.error('❌ Error fatal al inicializar uno o ambos Google Sheets:', error.message);
+        // Propagamos el error para que el proceso de inicio se detenga
+        throw error; 
+    }
+}
+
+
 // Llama a la función de inicialización de Google Sheet una vez que el servidor arranca.
-// El servidor no empezará a escuchar peticiones hasta que la conexión con la hoja esté lista.
-initializeGoogleSheet().then(() => {
+// El servidor no empezará a escuchar peticiones hasta que ambas conexiones estén listas.
+initializeAllSheets().then(() => {
+    // Si la inicialización fue exitosa, iniciamos el servidor
     app.listen(PORT, () => {
         console.log(`✅ Servidor funcionando en http://localhost:${PORT}`);
     });
 }).catch(err => {
-    console.error('❌ Fallo al iniciar el servidor debido a un error de inicialización de Google Sheet:', err);
+    console.error('❌ Fallo al iniciar el servidor debido a un error de inicialización:', err);
     process.exit(1); // Sale si no se puede iniciar el servidor
-});
+});  
