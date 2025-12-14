@@ -33,90 +33,134 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentStep = 0; 
     let formSteps = []; 
 
-    // --- CONFIGURACIÓN DE CAMPOS ---
-    const fieldsConfig = [
-        // Paso 1
-        { name: 'Presión Arterial', label: 'Presión Arterial', type: 'select', options: ['Control Normal', 'Hipertension'], hasStudyButton: true, studyType: 'Enfermeria', required: true, icon: 'fas fa-heartbeat' },
-        { name: 'Observaciones - Presión Arterial', label: 'Obs. Presión Arterial', type: 'textarea', required: false, icon: 'fas fa-comment' },
+    // --- CONFIGURACIÓN POR PÁGINAS (Array de Arrays) ---
+    // Cada bloque [] es UNA PÁGINA en el formulario.
+    const stepsConfig = [
+        // PÁGINA 1
+        [
+            { name: 'Presión Arterial', label: 'Presión Arterial', type: 'select', options: ['Control Normal', 'Hipertension'], hasStudyButton: true, studyType: 'Enfermeria', required: true, icon: 'fas fa-heartbeat' },
+            { name: 'Observaciones - Presión Arterial', label: 'Obs. Presión Arterial', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 2
+        [
+            { name: 'IMC', label: 'IMC', type: 'select', options: ['Bajo Peso', 'Control Normal', 'Sobrepeso', 'Obesidad', 'Obesidad Morbida'], hasStudyButton: true, studyType: 'Enfermeria', required: true, icon: 'fas fa-weight' },
+            { name: 'Observaciones - IMC', label: 'Obs. IMC', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 3
+        [
+            { name: 'Alimentación saludable', label: 'Alimentación saludable', type: 'select', options: ['No', 'Si'], required: true, icon: 'fas fa-apple-alt' },
+            { name: 'Observaciones - Alimentación saludable', label: 'Obs. Alimentación saludable', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 4
+        [
+            { name: 'Actividad física', label: 'Actividad física', type: 'select', options: ['No realiza', 'Si realiza'], required: true, icon: 'fas fa-running' },
+            { name: 'Observaciones - Actividad física', label: 'Obs. Actividad física', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 5
+        [
+            { name: 'Seguridad vial', label: 'Seguridad vial', type: 'select', options: ['Cumple', 'No cumple'], required: true, icon: 'fas fa-car' },
+            { name: 'Observaciones - Seguridad vial', label: 'Obs. Seguridad vial', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 6
+        [
+            { name: 'Tabaco', label: 'Tabaco', type: 'select', options: ['Fuma', 'No fuma'], required: true, icon: 'fas fa-smoking' },
+            { name: 'Observaciones - Tabaco', label: 'Obs. Tabaco', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 7
+        [
+            { name: 'Violencia', label: 'Violencia', type: 'select', options: ['No se verifica', 'Se verifica'], required: true, icon: 'fas fa-hand-rock' },
+            { name: 'Observaciones - Violencia', label: 'Obs. Violencia', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 8
+        [
+            { name: 'Examen Fisico', label: 'Examen Fisico', type: 'select', options: ['Control Normal', 'Con Observaciones'], required: true, icon: 'fas fa-user-md' },
+            { name: 'Observaciones - Examen Fisico', label: 'Obs. Examen Fisico', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 9
+        [
+            { name: 'Talla', label: 'Talla', type: 'select', options: ['Alta', 'Baja', 'Control Normal'], required: true, icon: 'fas fa-ruler-vertical' },
+            { name: 'Observaciones - Talla', label: 'Obs. Talla', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 10
+        [
+            { name: 'Salud Ocular', label: 'Salud Ocular', type: 'select', options: ['Alterada', 'Control Normal'], required: true, icon: 'fas fa-eye' },
+            { name: 'Observaciones - Salud Ocular', label: 'Obs. Salud Ocular', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 11
+        [
+            { name: 'Audición', label: 'Audición', type: 'select', options: ['Alterada', 'Control Normal'], required: true, icon: 'fas fa-ear-listen' },
+            { name: 'Observaciones - Audición', label: 'Obs. Audición', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 12
+        [
+            { name: 'Salud Cardiovascular', label: 'Salud Cardiovascular', type: 'select', options: ['Control Normal', 'Con Observaciones'], required: true, icon: 'fas fa-heart' },
+            { name: 'Observaciones - Salud Cardiovascular', label: 'Obs. Salud Cardiovascular', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 13
+        [
+            { name: 'Educación sexual', label: 'Educación sexual', type: 'select', options: ['Consejeria', 'Con Observaciones'], required: true, icon: 'fas fa-venus-mars' },
+            { name: 'Observaciones - Educación sexual', label: 'Obs. Educación sexual', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 14
+        [
+            { name: 'Salud Mental Integral', label: 'Salud Mental Integral', type: 'select', options: ['Consejeria', 'Con Observaciones'], required: true, icon: 'fas fa-brain' },
+            { name: 'Observaciones - Salud Mental', label: 'Obs. Salud Mental', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 15
+        [
+            { name: 'Consumo de sustancias problemáticas', label: 'Consumo de sustancias problemáticas', type: 'select', options: ['No aplica', 'Presenta', 'No presenta'], required: true, icon: 'fas fa-syringe' },
+            { name: 'Observaciones - Consumo de sustancias', label: 'Obs. Consumo de sustancias', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 16
+        [
+            { name: 'Pesquisa de Dislipemia', label: 'Pesquisa de Dislipemia', type: 'select', options: ['No aplica', 'No presenta', 'Presenta'], hasStudyButton: true, studyType: 'Laboratorio', required: true, icon: 'fas fa-blood-drop' },
+            { name: 'Observaciones - Dislipemia', label: 'Obs. Dislipemia', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 17
+        [
+            { name: 'Síndrome Metabólico', label: 'Síndrome Metabólico', type: 'select', options: ['No aplica', 'No presenta', 'Presenta'], required: true, icon: 'fas fa-thermometer-half' },
+            { name: 'Observaciones - Síndrome Metabólico', label: 'Obs. Síndrome Metabólico', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 18
+        [
+            { name: 'Escoliosis', label: 'Escoliosis', type: 'select', options: ['No aplica', 'No presenta', 'Presenta'], required: true, icon: 'fas fa-shoe-prints' },
+            { name: 'Observaciones - Escoliosis', label: 'Obs. Escoliosis', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 19
+        [
+            { name: 'Cáncer cérvico uterino', label: 'Cáncer cérvico uterino', type: 'select', options: ['No aplica', 'No tiene vacuna VPH', 'Tiene vacuna VPH'], required: true, icon: 'fas fa-dna' },
+            { name: 'Observaciones - Cáncer cérvico uterino', label: 'Obs. Cáncer cérvico uterino', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 20
+        [
+            { name: 'Cáncer de piel', label: 'Cáncer de piel', type: 'select', options: ['Consejeria', 'Derivacion a especialista'], required: true, icon: 'fas fa-sun' },
+            { name: 'Observaciones - Cáncer de piel', label: 'Obs. Cáncer de piel', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 21
+        [
+            { name: 'Desarrollo escolar y aprendizaje', label: 'Desarrollo escolar y aprendizaje', type: 'select', options: ['Acorde a edad', 'No acorde a edad', 'No aplica'], required: true, icon: 'fas fa-school' },
+            { name: 'Observaciones - Desarrollo escolar', label: 'Obs. Desarrollo escolar', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
         
-        { name: 'IMC', label: 'IMC', type: 'select', options: ['Bajo Peso', 'Control Normal', 'Sobrepeso', 'Obesidad', 'Obesidad Morbida'], hasStudyButton: true, studyType: 'Enfermeria', required: true, icon: 'fas fa-weight' },
-        { name: 'Observaciones - IMC', label: 'Obs. IMC', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Alimentación saludable', label: 'Alimentación saludable', type: 'select', options: ['No', 'Si'], required: true, icon: 'fas fa-apple-alt' },
-        { name: 'Observaciones - Alimentación saludable', label: 'Obs. Alimentación saludable', type: 'textarea', required: false, icon: 'fas fa-comment' },
+        // --- PÁGINA 22 (EXCEPCIÓN: PANTALLAS - 3 CAMPOS JUNTOS) ---
+        [
+            { name: 'Uso de pantallas', label: 'Uso de pantallas', type: 'select', options: ['Si', 'No'], required: true, icon: 'fas fa-mobile-alt' },
+            { name: 'Cantidad de horas diarias', label: 'Cantidad de horas diarias', type: 'text', required: false, icon: 'fas fa-clock', placeholder: 'Ej: 2 horas' }, 
+            { name: 'Observaciones - Uso de pantallas', label: 'Obs. Uso de pantallas', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
 
-        // Paso 2
-        { name: 'Actividad física', label: 'Actividad física', type: 'select', options: ['No realiza', 'Si realiza'], required: true, icon: 'fas fa-running' },
-        { name: 'Observaciones - Actividad física', label: 'Obs. Actividad física', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Seguridad vial', label: 'Seguridad vial', type: 'select', options: ['Cumple', 'No cumple'], required: true, icon: 'fas fa-car' },
-        { name: 'Observaciones - Seguridad vial', label: 'Obs. Seguridad vial', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Tabaco', label: 'Tabaco', type: 'select', options: ['Fuma', 'No fuma'], required: true, icon: 'fas fa-smoking' },
-        { name: 'Observaciones - Tabaco', label: 'Obs. Tabaco', type: 'textarea', required: false, icon: 'fas fa-comment' },
-
-        // Paso 3
-        { name: 'Violencia', label: 'Violencia', type: 'select', options: ['No se verifica', 'Se verifica'], required: true, icon: 'fas fa-hand-rock' },
-        { name: 'Observaciones - Violencia', label: 'Obs. Violencia', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Examen Fisico', label: 'Examen Fisico', type: 'select', options: ['Control Normal', 'Con Observaciones'], required: true, icon: 'fas fa-user-md' },
-        { name: 'Observaciones - Examen Fisico', label: 'Obs. Examen Fisico', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Talla', label: 'Talla', type: 'select', options: ['Alta', 'Baja', 'Control Normal'], required: true, icon: 'fas fa-ruler-vertical' },
-        { name: 'Observaciones - Talla', label: 'Obs. Talla', type: 'textarea', required: false, icon: 'fas fa-comment' },
-
-        // Paso 4
-        { name: 'Salud Ocular', label: 'Salud Ocular', type: 'select', options: ['Alterada', 'Control Normal'], required: true, icon: 'fas fa-eye' },
-        { name: 'Observaciones - Salud Ocular', label: 'Obs. Salud Ocular', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Audición', label: 'Audición', type: 'select', options: ['Alterada', 'Control Normal'], required: true, icon: 'fas fa-ear-listen' },
-        { name: 'Observaciones - Audición', label: 'Obs. Audición', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Salud Cardiovascular', label: 'Salud Cardiovascular', type: 'select', options: ['Control Normal', 'Con Observaciones'], required: true, icon: 'fas fa-heart' },
-        { name: 'Observaciones - Salud Cardiovascular', label: 'Obs. Salud Cardiovascular', type: 'textarea', required: false, icon: 'fas fa-comment' },
-
-        // Paso 5
-        { name: 'Educación sexual', label: 'Educación sexual', type: 'select', options: ['Consejeria', 'Con Observaciones'], required: true, icon: 'fas fa-venus-mars' },
-        { name: 'Observaciones - Educación sexual', label: 'Obs. Educación sexual', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Salud Mental Integral', label: 'Salud Mental Integral', type: 'select', options: ['Consejeria', 'Con Observaciones'], required: true, icon: 'fas fa-brain' },
-        { name: 'Observaciones - Salud Mental', label: 'Obs. Salud Mental', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Consumo de sustancias problemáticas', label: 'Consumo de sustancias problemáticas', type: 'select', options: ['No aplica', 'Presenta', 'No presenta'], required: true, icon: 'fas fa-syringe' },
-        { name: 'Observaciones - Consumo de sustancias', label: 'Obs. Consumo de sustancias', type: 'textarea', required: false, icon: 'fas fa-comment' },
-
-        // Paso 6
-        { name: 'Pesquisa de Dislipemia', label: 'Pesquisa de Dislipemia', type: 'select', options: ['No aplica', 'No presenta', 'Presenta'], hasStudyButton: true, studyType: 'Laboratorio', required: true, icon: 'fas fa-blood-drop' },
-        { name: 'Observaciones - Dislipemia', label: 'Obs. Dislipemia', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Síndrome Metabólico', label: 'Síndrome Metabólico', type: 'select', options: ['No aplica', 'No presenta', 'Presenta'], required: true, icon: 'fas fa-thermometer-half' },
-        { name: 'Observaciones - Síndrome Metabólico', label: 'Obs. Síndrome Metabólico', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Escoliosis', label: 'Escoliosis', type: 'select', options: ['No aplica', 'No presenta', 'Presenta'], required: true, icon: 'fas fa-shoe-prints' },
-        { name: 'Observaciones - Escoliosis', label: 'Obs. Escoliosis', type: 'textarea', required: false, icon: 'fas fa-comment' },
-
-        // Paso 7
-        { name: 'Cáncer cérvico uterino', label: 'Cáncer cérvico uterino', type: 'select', options: ['No aplica', 'No tiene vacuna VPH', 'Tiene vacuna VPH'], required: true, icon: 'fas fa-dna' },
-        { name: 'Observaciones - Cáncer cérvico uterino', label: 'Obs. Cáncer cérvico uterino', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Cáncer de piel', label: 'Cáncer de piel', type: 'select', options: ['Consejeria', 'Derivacion a especialista'], required: true, icon: 'fas fa-sun' },
-        { name: 'Observaciones - Cáncer de piel', label: 'Obs. Cáncer de piel', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Desarrollo escolar y aprendizaje', label: 'Desarrollo escolar y aprendizaje', type: 'select', options: ['Acorde a edad', 'No acorde a edad', 'No aplica'], required: true, icon: 'fas fa-school' },
-        { name: 'Observaciones - Desarrollo escolar', label: 'Obs. Desarrollo escolar', type: 'textarea', required: false, icon: 'fas fa-comment' },
-
-        // Paso 8 (Pantallas y Vacunas)
-        { name: 'Uso de pantallas', label: 'Uso de pantallas', type: 'select', options: ['Si', 'No'], required: true, icon: 'fas fa-mobile-alt' },
-        { name: 'Cantidad de horas diarias', label: 'Cantidad de horas diarias', type: 'text', required: false, icon: 'fas fa-clock', placeholder: 'Ej: 2 horas' }, 
-        { name: 'Observaciones - Uso de pantallas', label: 'Obs. Uso de pantallas', type: 'textarea', required: false, icon: 'fas fa-comment' },
-        
-        { name: 'Control de vacunas de calendario', label: 'Control de vacunas de calendario', type: 'select', options: ['Completo', 'Incompleto'], hasStudyButton: true, studyType: 'Enfermeria', required: true, icon: 'fas fa-syringe' },
-        { name: 'Observaciones - Vacunas', label: 'Obs. Vacunas', type: 'textarea', required: false, icon: 'fas fa-comment' },
-
-        // Paso 9
-        { name: 'Control Odontológico - Niños', label: 'Control Odontológico - Niños', type: 'select', options: ['Control Normal', 'Riesgo Alto', 'Riesgo Bajo', 'Riesgo Moderado', 'No aplica'], hasStudyButton: true, studyType: 'Odontologia', required: true, icon: 'fas fa-tooth' },
-        { name: 'Observaciones - Control Odontológico', label: 'Obs. Control Odontológico', type: 'textarea', required: false, icon: 'fas fa-comment' },
+        // PÁGINA 23
+        [
+            { name: 'Control de vacunas de calendario', label: 'Control de vacunas de calendario', type: 'select', options: ['Completo', 'Incompleto'], hasStudyButton: true, studyType: 'Enfermeria', required: true, icon: 'fas fa-syringe' },
+            { name: 'Observaciones - Vacunas', label: 'Obs. Vacunas', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ],
+        // PÁGINA 24
+        [
+            { name: 'Control Odontológico - Niños', label: 'Control Odontológico - Niños', type: 'select', options: ['Control Normal', 'Riesgo Alto', 'Riesgo Bajo', 'Riesgo Moderado', 'No aplica'], hasStudyButton: true, studyType: 'Odontologia', required: true, icon: 'fas fa-tooth' },
+            { name: 'Observaciones - Control Odontológico', label: 'Obs. Control Odontológico', type: 'textarea', required: false, icon: 'fas fa-comment' }
+        ]
     ];
+
 
     // --- FUNCIONES ---
 
@@ -138,36 +182,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    // --- LÓGICA DE VALIDACIÓN MEJORADA ---
     function setupConditionalValidation() {
         const selects = document.querySelectorAll('select');
         
         selects.forEach(select => {
             select.addEventListener('change', function() {
                 const value = this.value;
-                const fieldName = this.name; // Nombre original "Salud Mental Integral"
-                
-                // Encontrar el textarea correspondiente (asumiendo que está en el mismo paso)
-                // Buscamos el input que tenga name="Observaciones - [Nombre del select]"
-                // O casos especiales como "Observaciones - Salud Mental"
+                const fieldName = this.name;
                 
                 let obsFieldName = `Observaciones - ${fieldName}`;
                 
-                // Correcciones manuales para nombres que no siguen el patrón exacto "Observaciones - Nombre Exacto"
+                // Mapeos especiales para nombres que no siguen el patrón estándar
                 if (fieldName === 'Salud Mental Integral') obsFieldName = 'Observaciones - Salud Mental';
                 if (fieldName === 'Consumo de sustancias problemáticas') obsFieldName = 'Observaciones - Consumo de sustancias';
                 if (fieldName === 'Pesquisa de Dislipemia') obsFieldName = 'Observaciones - Dislipemia';
                 if (fieldName === 'Control de vacunas de calendario') obsFieldName = 'Observaciones - Vacunas';
                 if (fieldName === 'Control Odontológico - Niños') obsFieldName = 'Observaciones - Control Odontológico';
 
-                // Normalizamos para encontrar el ID
                 const obsId = obsFieldName.replace(/\s/g, '_').replace(/-/g, '_').replace(/[\(\)]/g, '');
                 const textarea = document.getElementById(obsId);
 
                 if (textarea) {
                     let esObligatorio = false;
 
-                    // Reglas Generales
+                    // Reglas Generales (Respuestas "malas")
                     const triggers = ['con observaciones', 'alterada', 'hipertension', 'obesidad', 'bajo peso', 'sobrepeso', 'se verifica', 'incompleto', 'no acorde', 'no cumple', 'riesgo', 'patologico', 'fuma'];
                     if (triggers.some(t => value.toLowerCase().includes(t))) esObligatorio = true;
 
@@ -178,8 +216,24 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (fieldName === 'Síndrome Metabólico' && value === 'Presenta') esObligatorio = true;
                     if (fieldName === 'Escoliosis' && value === 'Presenta') esObligatorio = true;
                     if (fieldName === 'Pesquisa de Dislipemia' && value === 'Presenta') esObligatorio = true;
+                    if (fieldName === 'Uso de pantallas' && value === 'Si') esObligatorio = false; // "Si" usa pantallas no obliga observación necesariamente, pero...
                     
-                    // Aplicar validación
+                    // Lógica especial para horas de pantalla
+                    if (fieldName === 'Uso de pantallas') {
+                        // Buscar el input de horas que está al lado
+                        const horasInput = document.getElementById('Cantidad_de_horas_diarias');
+                        if (horasInput) {
+                            if (value === 'Si') {
+                                horasInput.required = true;
+                                horasInput.classList.add('ring-2', 'ring-blue-400', 'bg-blue-50');
+                            } else {
+                                horasInput.required = false;
+                                horasInput.value = '';
+                                horasInput.classList.remove('ring-2', 'ring-blue-400', 'bg-blue-50');
+                            }
+                        }
+                    }
+
                     if (esObligatorio) {
                         textarea.required = true;
                         textarea.classList.add('ring-2', 'ring-yellow-400', 'bg-yellow-50');
@@ -198,98 +252,101 @@ document.addEventListener('DOMContentLoaded', () => {
         formStepsContainer.innerHTML = ''; 
         formSteps = []; 
         let stepDiv;
-        let fieldCounter = 0;
-        const fieldsPerStep = 6; 
 
-        fieldsConfig.forEach((field) => {
-            if (fieldCounter % fieldsPerStep === 0) { 
-                stepDiv = document.createElement('div');
-                stepDiv.className = 'form-step grid grid-cols-1 md:grid-cols-2 gap-6 p-6 bg-white rounded-lg shadow-inner border border-blue-100 hidden'; 
-                formStepsContainer.appendChild(stepDiv);
-                formSteps.push(stepDiv);
-            }
-
-            const fieldContainer = document.createElement('div');
-            fieldContainer.className = 'mb-4';
+        // ITERAMOS SOBRE LAS PÁGINAS (GRUPOS) DEFINIDAS EN LA CONFIG
+        stepsConfig.forEach((pageFields, pageIndex) => {
             
-            const label = document.createElement('label');
-            // Usamos field.name tal cual para el display, normalizamos para el ID
-            const fieldId = field.name.replace(/\s/g, '_').replace(/-/g, '_').replace(/[\(\)]/g, '');
-            label.htmlFor = fieldId;
-            label.className = 'block text-gray-700 text-sm font-bold mb-2 flex items-center';
-            if (field.icon) {
-                const icon = document.createElement('i');
-                icon.className = `${field.icon} mr-2 text-blue-600`;
-                label.appendChild(icon);
-            }
-            label.appendChild(document.createTextNode(field.label + ':'));
+            // Crear el contenedor de la página (Paso)
+            stepDiv = document.createElement('div');
+            // Usamos flex-col para que las preguntas queden una debajo de la otra en móviles, 
+            // pero mantenemos el grid para pantallas grandes si hay espacio, aunque con 2 o 3 campos, una sola columna vertical se ve mejor y más enfocada.
+            // Vamos a usar una sola columna para centrar la atención.
+            stepDiv.className = 'form-step flex flex-col gap-4 p-6 bg-white rounded-lg shadow-inner border border-blue-100 hidden'; 
+            formStepsContainer.appendChild(stepDiv);
+            formSteps.push(stepDiv);
 
-            let inputElement;
-            const inputClasses = 'shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition';
+            // Iteramos sobre los campos de ESTA página
+            pageFields.forEach(field => {
+                const fieldContainer = document.createElement('div');
+                fieldContainer.className = 'w-full'; // Ocupar ancho completo
+                
+                const label = document.createElement('label');
+                const fieldId = field.name.replace(/\s/g, '_').replace(/-/g, '_').replace(/[\(\)]/g, '');
+                label.htmlFor = fieldId;
+                label.className = 'block text-gray-700 text-base font-bold mb-2 flex items-center'; // Texto un poco más grande
+                if (field.icon) {
+                    const icon = document.createElement('i');
+                    icon.className = `${field.icon} mr-2 text-blue-600`;
+                    label.appendChild(icon);
+                }
+                label.appendChild(document.createTextNode(field.label + ':'));
 
-            if (field.type === 'select') {
-                inputElement = document.createElement('select');
-                inputElement.className = inputClasses + ' bg-white';
-                inputElement.id = fieldId;
-                inputElement.name = field.name; // IMPORTANTE: Nombre con espacios para el servidor
-                inputElement.required = field.required !== false;
+                let inputElement;
+                const inputClasses = 'shadow appearance-none border rounded w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition';
 
-                const defaultOption = document.createElement('option');
-                defaultOption.value = '';
-                defaultOption.textContent = 'Seleccione...';
-                defaultOption.disabled = true;
-                defaultOption.selected = true;
-                inputElement.appendChild(defaultOption);
+                if (field.type === 'select') {
+                    inputElement = document.createElement('select');
+                    inputElement.className = inputClasses + ' bg-white cursor-pointer';
+                    inputElement.id = fieldId;
+                    inputElement.name = field.name; 
+                    inputElement.required = field.required !== false;
 
-                field.options.forEach(optionText => {
-                    const option = document.createElement('option');
-                    option.value = optionText;
-                    option.textContent = optionText;
-                    inputElement.appendChild(option);
-                });
-            } else if (field.type === 'textarea') {
-                inputElement = document.createElement('textarea');
-                inputElement.className = `${inputClasses} h-20 resize-y`;
-                inputElement.id = fieldId;
-                inputElement.name = field.name;
-                inputElement.required = field.required !== false;
-            } else { 
-                inputElement = document.createElement('input');
-                inputElement.type = field.type;
-                inputElement.className = inputClasses;
-                inputElement.id = fieldId;
-                inputElement.name = field.name;
-                inputElement.required = field.required !== false;
-                if(field.placeholder) inputElement.placeholder = field.placeholder;
-            }
+                    const defaultOption = document.createElement('option');
+                    defaultOption.value = '';
+                    defaultOption.textContent = 'Seleccione una opción...';
+                    defaultOption.disabled = true;
+                    defaultOption.selected = true;
+                    inputElement.appendChild(defaultOption);
 
-            fieldContainer.appendChild(label);
+                    field.options.forEach(optionText => {
+                        const option = document.createElement('option');
+                        option.value = optionText;
+                        option.textContent = optionText;
+                        inputElement.appendChild(option);
+                    });
+                } else if (field.type === 'textarea') {
+                    inputElement = document.createElement('textarea');
+                    inputElement.className = `${inputClasses} h-24 resize-y`; // Más alto
+                    inputElement.id = fieldId;
+                    inputElement.name = field.name;
+                    inputElement.required = field.required !== false;
+                } else { 
+                    inputElement = document.createElement('input');
+                    inputElement.type = field.type;
+                    inputElement.className = inputClasses;
+                    inputElement.id = fieldId;
+                    inputElement.name = field.name;
+                    inputElement.required = field.required !== false;
+                    if(field.placeholder) inputElement.placeholder = field.placeholder;
+                }
 
-            if (field.hasStudyButton) {
-                const inputGroup = document.createElement('div');
-                inputGroup.className = 'flex items-center';
-                inputGroup.appendChild(inputElement);
+                fieldContainer.appendChild(label);
 
-                const studyButton = document.createElement('button');
-                studyButton.className = 'bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold py-2 px-3 rounded-r ml-1 border border-blue-200 focus:outline-none transition flex-shrink-0 text-xs';
-                studyButton.innerHTML = `<i class="fas fa-search"></i> Ver`;
-                studyButton.dataset.studyType = field.studyType;
-                studyButton.addEventListener('click', (e) => {
-                    e.preventDefault(); 
-                    if (currentPatientDNI) {
-                        mostrarEstudiosModal(currentPatientDNI, studyButton.dataset.studyType);
-                    } else {
-                        alert('DNI del paciente no disponible.');
-                    }
-                });  
-                inputGroup.appendChild(studyButton);
-                fieldContainer.appendChild(inputGroup);
-            } else {
-                fieldContainer.appendChild(inputElement);
-            }
+                if (field.hasStudyButton) {
+                    const inputGroup = document.createElement('div');
+                    inputGroup.className = 'flex items-center';
+                    inputGroup.appendChild(inputElement);
 
-            stepDiv.appendChild(fieldContainer);
-            fieldCounter++;
+                    const studyButton = document.createElement('button');
+                    studyButton.className = 'ml-2 bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold py-3 px-4 rounded border border-blue-200 focus:outline-none transition whitespace-nowrap';
+                    studyButton.innerHTML = `<i class="fas fa-search mr-1"></i> Ver Estudio`;
+                    studyButton.dataset.studyType = field.studyType;
+                    studyButton.addEventListener('click', (e) => {
+                        e.preventDefault(); 
+                        if (currentPatientDNI) {
+                            mostrarEstudiosModal(currentPatientDNI, studyButton.dataset.studyType);
+                        } else {
+                            alert('DNI del paciente no disponible.');
+                        }
+                    });  
+                    inputGroup.appendChild(studyButton);
+                    fieldContainer.appendChild(inputGroup);
+                } else {
+                    fieldContainer.appendChild(inputElement);
+                }
+
+                stepDiv.appendChild(fieldContainer);
+            });
         });
 
         setupConditionalValidation();
@@ -310,7 +367,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateProgressBar() {
-        const progress = formSteps.length === 0 ? 0 : ((currentStep + 1) / formSteps.length) * 100;
+        // Evitar división por cero
+        if (formSteps.length === 0) {
+            progressBar.style.width = '0%';
+            return;
+        }
+        const progress = ((currentStep + 1) / formSteps.length) * 100;
         progressBar.style.width = `${progress}%`;
     }
 
@@ -382,8 +444,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     
                     if (pdfLink && pdfLink.length > 5) {
                         html += `<div class="mt-3 pt-2 border-t border-gray-100 flex justify-end">`;
-                        html += `<a href="${pdfLink}" target="_blank" class="inline-flex items-center px-2 py-1 bg-red-50 text-red-600 border border-red-200 text-xs font-bold rounded hover:bg-red-100 transition shadow-sm">`;
-                        html += `<i class="fas fa-file-pdf mr-1"></i> Ver Informe PDF`;
+                        html += `<a href="${pdfLink}" target="_blank" class="inline-flex items-center px-3 py-2 bg-red-50 text-red-600 border border-red-200 text-sm font-bold rounded hover:bg-red-100 transition shadow-sm">`;
+                        html += `<i class="fas fa-file-pdf mr-2"></i> Ver Informe PDF`;
                         html += `</a>`;
                         html += `</div>`;
                     }
@@ -400,7 +462,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- EVENTOS ---
+    // --- EVENTOS DE INTERFAZ ---
     
     checkAuthStatus();
     const today = new Date().toISOString().split('T')[0];
@@ -463,15 +525,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
         formData['FECHA'] = fechaCierreInput.value;
 
+        // Recolectar datos dinámicos de TODOS los pasos
+        // Nota: Los inputs pueden estar ocultos si no es el paso actual, pero existen en el DOM
         const allDynamicInputs = cierreForm.querySelectorAll('.form-step input, .form-step select, .form-step textarea');
         allDynamicInputs.forEach(input => {
             if (input.required && !input.value.trim()) {
                 allFieldsValid = false;
-                input.classList.add('border-red-500', 'ring-red-500'); 
-            } else {
-                input.classList.remove('border-red-500', 'ring-red-500');
+                // Si el campo está en un paso oculto, no podemos hacer scroll hacia él fácilmente, 
+                // pero marcamos el error.
             }
-            // Aquí usamos input.name que AHORA SÍ tiene los espacios correctos del Config
             formData[input.name] = input.value.trim();
         });
         
@@ -479,7 +541,7 @@ document.addEventListener('DOMContentLoaded', () => {
         formData['Apellido_Nombre'] = `${formData['Apellido']} ${formData['Nombre']}`;
 
         if (!allFieldsValid) {
-            alert('Por favor, complete todos los campos obligatorios (marcados en rojo o amarillo).');
+            alert('Por favor, revise el formulario. Hay campos obligatorios sin completar.');
             return;
         }
 
