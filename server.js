@@ -309,28 +309,6 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
     }
 });
 
-// Función para inicializar el documento de Google Sheet y cargar su información (SOLO UNA VEZ)
-async function initializeGoogleSheet() {
-    try {
-        doc = new GoogleSpreadsheet(SPREADSHEET_ID);
-        
-        if (process.env.CREDENTIALS_JSON) {
-            credentials = JSON.parse(process.env.CREDENTIALS_JSON);
-        } else {
-            credentials = require('./credentials.json');
-        }
-
-        await doc.useServiceAccountAuth({
-            client_email: credentials.client_email,
-            private_key: credentials.private_key.replace(/\\n/g, '\n'),
-        });
-        await doc.loadInfo();
-        console.log('✅ Google Sheet document loaded successfully.');
-    } catch (error) {
-        console.error('❌ Error initializing Google Sheet document:', error);
-        throw error; // Re-lanza el error para que el servidor no arranque si falla la conexión
-    }
-}
 
 
 // >>>>> CAMBIO 3: NUEVA FUNCIÓN DE INICIALIZACIÓN PARA IAPOS <<<<<
@@ -1158,14 +1136,10 @@ async function initializeAllSheets() {
 }
 
 
-// Llama a la función de inicialización de Google Sheet una vez que el servidor arranca.
-// El servidor no empezará a escuchar peticiones hasta que ambas conexiones estén listas.
-initializeAllSheets().then(() => {
-    // Si la inicialización fue exitosa, iniciamos el servidor
-    app.listen(PORT, () => {
-        console.log(`✅ Servidor funcionando en http://localhost:${PORT}`);
-    });
-}).catch(err => {
-    console.error('❌ Fallo al iniciar el servidor debido a un error de inicialización:', err);
-    process.exit(1); // Sale si no se puede iniciar el servidor
-});  
+
+
+// --- NUEVO ARRANQUE DIRECTO (Solo Pediatría) ---
+// Arrancamos el servidor sin esperar a la hoja de cálculo vieja
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor iniciado en puerto ${PORT} (Modo Pediatría - Sin conexión a Hoja Adultos)`);
+});
