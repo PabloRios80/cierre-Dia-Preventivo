@@ -243,123 +243,62 @@ app.post('/api/enfermeria/guardar', async (req, res) => {
         res.status(500).json({ message: 'Error interno del servidor.' });
     }
 });
-
-// --- RUTA DE GUARDADO CORREGIDA (SINCRONIZADA CON EL FRONTEND) ---
+// --- RUTA: Guardar Pediatría (Conexión Segura vía Apps Script) ---
 app.post('/api/cierre-pediatria/guardar', async (req, res) => {
+    
+    // 1. Validar que el usuario esté logueado (Seguridad de tu App)
     if (!req.isAuthenticated()) {
         return res.status(401).json({ success: false, error: "Usuario no autenticado." });
     }
 
+    // 2. Obtener la URL secreta desde las Variables de Entorno
+    const scriptUrl = process.env.URL_SCRIPT_PEDIATRIA;
+
+    if (!scriptUrl) {
+        console.error("ERROR CRÍTICO: No se configuró URL_SCRIPT_PEDIATRIA en el .env");
+        return res.status(500).json({ success: false, error: "Error de configuración del servidor." });
+    }
+
+    const formData = req.body;
+    const nombreProfesional = req.user.displayName || 'Desconocido';
+
+    // Preparar datos (separar apellido/nombre)
+    const nombreCompleto = (formData['Apellido_Nombre'] || '').trim();
+    const primerEspacio = nombreCompleto.indexOf(' ');
+    let apellido = nombreCompleto;
+    let nombre = '';
+    if (primerEspacio > 0) {
+        apellido = nombreCompleto.substring(0, primerEspacio);
+        nombre = nombreCompleto.substring(primerEspacio + 1);
+    }
+
+    // Payload para enviar a Google
+    const payload = {
+        ...formData,
+        'Profesional': nombreProfesional,
+        'Apellido': apellido,
+        'Nombre': nombre
+    };
+
     try {
-        if (!doc) await initializeGoogleSheet();
-        
-        const SHEET_TITLE = 'cierre_pediatria';
-        const sheet = doc.sheetsByTitle[SHEET_TITLE];
+        // 3. Enviar datos a la URL secreta
+        const response = await fetch(scriptUrl, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+            // No hacen falta headers especiales porque la seguridad es la URL misma
+        });
 
-        if (!sheet) {
-            return res.status(500).json({ success: false, error: `La pestaña "${SHEET_TITLE}" no existe.` });
+        const result = await response.json();
+
+        if (result.success) {
+            res.json({ success: true, message: "Datos guardados correctamente." });
+        } else {
+            throw new Error(result.error || "Error desconocido en GAS");
         }
-
-        const formData = req.body;
-        const nombreProfesional = req.user.displayName || formData['Profesional'] || 'Desconocido';
-
-        // SEPARAR NOMBRE Y APELLIDO
-        const nombreCompleto = (formData['Apellido_Nombre'] || '').trim();
-        const primerEspacio = nombreCompleto.indexOf(' ');
-        let apellido = nombreCompleto;
-        let nombre = '';
-        if (primerEspacio > 0) {
-            apellido = nombreCompleto.substring(0, primerEspacio);
-            nombre = nombreCompleto.substring(primerEspacio + 1);
-        }
-
-        // --- MAPEO EXACTO ---
-        // Lado Izquierdo: Nombre de columna en Google Sheet
-        // Lado Derecho: Nombre del campo que viene del Frontend (AHORA CON ESPACIOS)
-        const newRow = {
-            'Efector': formData['Efector'] || '',
-            'DNI': formData['DNI'] || '',
-            'Apellido': apellido, 
-            'Nombre': nombre,
-            'FECHA': formData['FECHA'] || new Date().toLocaleDateString('es-AR'),
-            'Edad': formData['Edad'] || '',
-            'Sexo': formData['Sexo'] || '',
-            'Profesional': nombreProfesional,
-
-            // Signos Vitales
-            'Presión Arterial': formData['Presión Arterial'] || '',
-            'Observaciones - Presión Arterial': formData['Observaciones - Presión Arterial'] || '',
-            'IMC': formData['IMC'] || '',
-            'Observaciones - IMC': formData['Observaciones - IMC'] || '',
-            'Alimentación saludable': formData['Alimentación saludable'] || '',
-            'Observaciones - Alimentación saludable': formData['Observaciones - Alimentación saludable'] || '',
-            
-            // Hábitos
-            'Actividad física': formData['Actividad física'] || '',
-            'Observaciones - Actividad física': formData['Observaciones - Actividad física'] || '',
-            'Seguridad vial': formData['Seguridad vial'] || '',
-            'Observaciones - Seguridad vial': formData['Observaciones - Seguridad vial'] || '',
-            'Tabaco': formData['Tabaco'] || '',
-            'Observaciones - Tabaco': formData['Observaciones - Tabaco'] || '',
-            'Violencia': formData['Violencia'] || '',
-            'Observaciones - Violencia': formData['Observaciones - Violencia'] || '',
-
-            // Examen Físico
-            'Examen Fisico': formData['Examen Fisico'] || '',
-            'Observaciones - Examen Fisico': formData['Observaciones - Examen Fisico'] || '',
-            'Talla': formData['Talla'] || '',
-            'Observaciones - Talla': formData['Observaciones - Talla'] || '',
-            'Salud Ocular': formData['Salud Ocular'] || '',
-            'Observaciones - Salud Ocular': formData['Observaciones - Salud Ocular'] || '',
-            'Audición': formData['Audición'] || '',
-            'Observaciones - Audición': formData['Observaciones - Audición'] || '',
-            'Salud Cardiovascular': formData['Salud Cardiovascular'] || '',
-            'Observaciones - Salud Cardiovascular': formData['Observaciones - Salud Cardiovascular'] || '',
-
-            // Salud Mental
-            'Educación sexual': formData['Educación sexual'] || '',
-            'Observaciones - Educación sexual': formData['Observaciones - Educación sexual'] || '',
-            'Salud Mental Integral': formData['Salud Mental Integral'] || '',
-            'Observaciones - Salud Mental': formData['Observaciones - Salud Mental'] || '',
-            'Consumo de sustancias problemáticas': formData['Consumo de sustancias problemáticas'] || '',
-            'Observaciones - Consumo de sustancias': formData['Observaciones - Consumo de sustancias'] || '',
-            
-            // Patologías
-            'Pesquisa de Dislipemia': formData['Pesquisa de Dislipemia'] || '',
-            'Observaciones - Dislipemia': formData['Observaciones - Dislipemia'] || '',
-            'Síndrome Metabólico': formData['Síndrome Metabólico'] || '',
-            'Observaciones - Síndrome Metabólico': formData['Observaciones - Síndrome Metabólico'] || '',
-            'Escoliosis': formData['Escoliosis'] || '',
-            'Observaciones - Escoliosis': formData['Observaciones - Escoliosis'] || '',
-            
-            // Cáncer
-            'Cáncer cérvico uterino': formData['Cáncer cérvico uterino'] || '',
-            'Observaciones - Cáncer cérvico uterino': formData['Observaciones - Cáncer cérvico uterino'] || '',
-            'Cáncer de piel': formData['Cáncer de piel'] || '',
-            'Observaciones - Cáncer de piel': formData['Observaciones - Cáncer de piel'] || '',
-
-            // Desarrollo
-            'Desarrollo escolar y aprendizaje': formData['Desarrollo escolar y aprendizaje'] || '',
-            'Observaciones - Desarrollo escolar': formData['Observaciones - Desarrollo escolar'] || '',
-            'Uso de pantallas': formData['Uso de pantallas'] || '',
-            'Cantidad de horas diarias': formData['Cantidad de horas diarias'] || '',
-            'Observaciones - Uso de pantallas': formData['Observaciones - Uso de pantallas'] || '',
-            
-            // Controles
-            'Control de vacunas de calendario': formData['Control de vacunas de calendario'] || '',
-            'Observaciones - Vacunas': formData['Observaciones - Vacunas'] || '',
-            'Control Odontológico - Niños': formData['Control Odontológico - Niños'] || '',
-            'Observaciones - Control Odontológico': formData['Observaciones - Control Odontológico'] || '',
-            
-            'Fecha_Carga_Sistema': new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
-        };
-
-        await sheet.addRow(newRow);
-        res.json({ success: true, message: "Ficha pediátrica guardada exitosamente." });
 
     } catch (error) {
-        console.error("Error al guardar cierre pediatría:", error);
-        res.status(500).json({ success: false, error: "Error interno al guardar.", details: error.message });
+        console.error("Error conectando con Apps Script:", error);
+        res.status(500).json({ success: false, error: "Error de conexión con la base de datos externa." });
     }
 });
 // Función para inicializar el documento de Google Sheet y cargar su información (SOLO UNA VEZ)
