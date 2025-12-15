@@ -148,14 +148,12 @@ app.get('/auth/google',
     passport.authenticate('google', { scope: ['profile', 'email'] })
 );
 
-
 app.get('/auth/google/callback',
-    passport.authenticate('google', { failureRedirect: '/login.html' }),
+    passport.authenticate('google', { failureRedirect: '/' }),
     (req, res) => {
-        // Redirige al usuario a la URL que intentaba acceder originalmente
-        const redirectUrl = req.session.returnTo || '/';
-        delete req.session.returnTo; // Limpia la variable de sesión
-        res.redirect(redirectUrl);
+        // CAMBIO: Forzamos la redirección directa al Portal Médico
+        // Ya no preguntamos "a dónde iba", lo mandamos directo al menú.
+        res.redirect('/index-medico.html');
     }
 );
 
