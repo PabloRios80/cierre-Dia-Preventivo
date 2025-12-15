@@ -243,64 +243,74 @@ app.post('/api/enfermeria/guardar', async (req, res) => {
         res.status(500).json({ message: 'Error interno del servidor.' });
     }
 });
-// --- RUTA: Guardar Pediatría (Conexión Segura vía Apps Script) ---
+// --- RUTA DE GUARDADO (CONECTADA A LA NUEVA HOJA VIA APPS SCRIPT) ---
 app.post('/api/cierre-pediatria/guardar', async (req, res) => {
     
-    // 1. Validar que el usuario esté logueado (Seguridad de tu App)
+    // 1. Verificación de Seguridad
     if (!req.isAuthenticated()) {
         return res.status(401).json({ success: false, error: "Usuario no autenticado." });
     }
 
-    // 2. Obtener la URL secreta desde las Variables de Entorno
+    // 2. Obtener la URL del Script desde el archivo .env
     const scriptUrl = process.env.URL_SCRIPT_PEDIATRIA;
 
     if (!scriptUrl) {
-        console.error("ERROR CRÍTICO: No se configuró URL_SCRIPT_PEDIATRIA en el .env");
-        return res.status(500).json({ success: false, error: "Error de configuración del servidor." });
+        console.error("ERROR CRÍTICO: No se encontró URL_SCRIPT_PEDIATRIA en el archivo .env");
+        return res.status(500).json({ success: false, error: "Error de configuración del servidor (Falta URL)." });
     }
-
-    const formData = req.body;
-    const nombreProfesional = req.user.displayName || 'Desconocido';
-
-    // Preparar datos (separar apellido/nombre)
-    const nombreCompleto = (formData['Apellido_Nombre'] || '').trim();
-    const primerEspacio = nombreCompleto.indexOf(' ');
-    let apellido = nombreCompleto;
-    let nombre = '';
-    if (primerEspacio > 0) {
-        apellido = nombreCompleto.substring(0, primerEspacio);
-        nombre = nombreCompleto.substring(primerEspacio + 1);
-    }
-
-    // Payload para enviar a Google
-    const payload = {
-        ...formData,
-        'Profesional': nombreProfesional,
-        'Apellido': apellido,
-        'Nombre': nombre
-    };
 
     try {
-        // 3. Enviar datos a la URL secreta
+        const formData = req.body;
+        const nombreProfesional = req.user.displayName || formData['Profesional'] || 'Desconocido';
+
+        // 3. Procesar Nombre y Apellido (Manteniendo tu lógica original)
+        const nombreCompleto = (formData['Apellido_Nombre'] || '').trim();
+        const primerEspacio = nombreCompleto.indexOf(' ');
+        let apellido = nombreCompleto;
+        let nombre = '';
+        
+        // Si vienen separados en el formData, usamos esos, sino los separamos del completo
+        if (formData['Apellido'] && formData['Nombre']) {
+            apellido = formData['Apellido'];
+            nombre = formData['Nombre'];
+        } else if (primerEspacio > 0) {
+            apellido = nombreCompleto.substring(0, primerEspacio);
+            nombre = nombreCompleto.substring(primerEspacio + 1);
+        }
+
+        // 4. Preparar el paquete de datos para enviar a Google
+        const payload = {
+            ...formData,
+            'Profesional': nombreProfesional,
+            'Apellido': apellido, 
+            'Nombre': nombre
+        };
+
+        console.log("Enviando datos a Apps Script...");
+
+        // 5. ENVÍO A LA NUEVA HOJA (Usando fetch al Script)
         const response = await fetch(scriptUrl, {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
-            // No hacen falta headers especiales porque la seguridad es la URL misma
         });
 
         const result = await response.json();
 
+        // 6. Respuesta al Frontend
         if (result.success) {
-            res.json({ success: true, message: "Datos guardados correctamente." });
+            res.json({ success: true, message: "Ficha guardada exitosamente en la nueva base de datos." });
         } else {
-            throw new Error(result.error || "Error desconocido en GAS");
+            console.error("Google Script respondió con error:", result.error);
+            throw new Error(result.error || "Error desconocido al guardar en Google.");
         }
 
     } catch (error) {
-        console.error("Error conectando con Apps Script:", error);
-        res.status(500).json({ success: false, error: "Error de conexión con la base de datos externa." });
+        console.error("Error al guardar cierre pediatría:", error);
+        res.status(500).json({ success: false, error: "Error interno al guardar.", details: error.message });
     }
 });
+
 // Función para inicializar el documento de Google Sheet y cargar su información (SOLO UNA VEZ)
 async function initializeGoogleSheet() {
     try {
