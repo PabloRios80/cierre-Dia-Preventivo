@@ -322,36 +322,47 @@ document.addEventListener('DOMContentLoaded', () => {
         searchSection.classList.add('hidden');
         patientDataSection.classList.remove('hidden');
     });
-
-    // 2. Confirmar Datos y pasar a Preguntas
+// --- BOTÓN CONFIRMAR DATOS (EL PORTERO DE SEGURIDAD) ---
     btnConfirmarDatos.addEventListener('click', () => {
-        // Validar que se hayan llenado los datos fijos
-        if(!pacienteApellidoInput.value || !pacienteNombreInput.value || !efectorInput.value || !pacienteEdadInput.value || !pacienteSexoSelect.value) {
+        // 1. Recolectar valores
+        const apellido = pacienteApellidoInput.value.trim();
+        const nombre = pacienteNombreInput.value.trim();
+        const edadTexto = pacienteEdadInput.value.trim();
+        const sexo = pacienteSexoSelect.value;
+        const efector = efectorInput.value;
+        const edad = parseInt(edadTexto);
+
+        // 2. Validar que no falten datos
+        if (!apellido || !nombre || !edadTexto || !sexo || !efector) {
             alert("Por favor complete todos los datos del paciente (Apellido, Nombre, Edad, Sexo, Efector).");
-            return;
+            return; // Frena aquí si falta algo
         }
 
-        // Mostrar resumen (opcional) o simplemente cambiar vista
-        if(resumenNombre) resumenNombre.textContent = `${pacienteApellidoInput.value} ${pacienteNombreInput.value}`;
+        // 3. VALIDACIÓN ESTRICTA DE EDAD (Aquí corregimos el error)
+        if (isNaN(edad) || edad > 17) {
+            alert("⚠️ ERROR: El límite para este formulario es 17 años de edad.\n\nPor favor corrija la edad para continuar.");
+            pacienteEdadInput.classList.add('ring-4', 'ring-red-500', 'border-red-500'); // Resalta en rojo fuerte
+            pacienteEdadInput.focus(); // Lleva al usuario a la casilla
+            return; // ¡IMPORTANTE! Esto impide avanzar a las preguntas
+        } else {
+            // Si la edad está bien, sacamos lo rojo
+            pacienteEdadInput.classList.remove('ring-4', 'ring-red-500', 'border-red-500');
+        }
+
+        // 4. Si pasa todas las validaciones, avanza
+        if(resumenNombre) resumenNombre.textContent = `${apellido} ${nombre}`;
         if(resumenDni) resumenDni.textContent = dniDisplayInput.value;
 
         // Cambio de pantalla: Datos -> Preguntas
         patientDataSection.classList.add('hidden');
         cierreForm.classList.remove('hidden');
-        btnCancelarContainer.classList.remove('hidden'); // Botón cancelar abajo
-        if(document.getElementById('mini-patient-header')) document.getElementById('mini-patient-header').classList.remove('hidden'); // Si usas el mini header
-
+        btnCancelarContainer.classList.remove('hidden'); 
+        
         generateFormSteps();
+        
+        // Un scroll suave hacia arriba para empezar cómodo
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     });
-
-    // 3. Editar Datos (Volver atrás)
-    if(btnEditarDatos) {
-        btnEditarDatos.addEventListener('click', () => {
-            cierreForm.classList.add('hidden');
-            btnCancelarContainer.classList.add('hidden');
-            patientDataSection.classList.remove('hidden');
-        });
-    }
 
     // 4. Navegación Preguntas
     nextStepBtn.addEventListener('click', () => {
