@@ -9,6 +9,14 @@ if (process.memoryUsage().heapTotal > heapSizeLimit) {
     global.gc();
 }
 
+const { createClient } = require('@supabase/supabase-js');
+const axios = require('axios');
+
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+);
+
 // Garbage collection automático cada 30 segundos
 setInterval(() => {
     if (global.gc) {
@@ -241,33 +249,22 @@ app.post('/api/enfermeria/guardar', async (req, res) => {
         res.status(500).json({ message: 'Error interno del servidor.' });
     }
 });
-// --- RUTA DE GUARDADO (CONECTADA A LA NUEVA HOJA VIA APPS SCRIPT) ---
 app.post('/api/cierre-pediatria/guardar', async (req, res) => {
-    
-    // 1. Verificación de Seguridad
     if (!req.isAuthenticated()) {
         return res.status(401).json({ success: false, error: "Usuario no autenticado." });
     }
 
-    // 2. Obtener la URL del Script desde el archivo .env
     const scriptUrl = process.env.URL_SCRIPT_PEDIATRIA;
-
-    if (!scriptUrl) {
-        console.error("ERROR CRÍTICO: No se encontró URL_SCRIPT_PEDIATRIA en el archivo .env");
-        return res.status(500).json({ success: false, error: "Error de configuración del servidor (Falta URL)." });
-    }
 
     try {
         const formData = req.body;
         const nombreProfesional = req.user.displayName || formData['Profesional'] || 'Desconocido';
 
-        // 3. Procesar Nombre y Apellido (Manteniendo tu lógica original)
         const nombreCompleto = (formData['Apellido_Nombre'] || '').trim();
         const primerEspacio = nombreCompleto.indexOf(' ');
         let apellido = nombreCompleto;
         let nombre = '';
         
-        // Si vienen separados en el formData, usamos esos, sino los separamos del completo
         if (formData['Apellido'] && formData['Nombre']) {
             apellido = formData['Apellido'];
             nombre = formData['Nombre'];
@@ -276,41 +273,106 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
             nombre = nombreCompleto.substring(primerEspacio + 1);
         }
 
-        // 4. Preparar el paquete de datos para enviar a Google
         const payload = {
             ...formData,
             'Profesional': nombreProfesional,
-            'Apellido': apellido, 
+            'Apellido': apellido,
             'Nombre': nombre
         };
 
-        console.log("Enviando datos a Apps Script...");
-
-        // 5. ENVÍO A LA NUEVA HOJA (Usando fetch al Script)
-        const response = await fetch(scriptUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        const result = await response.json();
-
-        // 6. Respuesta al Frontend
-        if (result.success) {
-            res.json({ success: true, message: "Ficha guardada exitosamente en la nueva base de datos." });
-        } else {
-            console.error("Google Script respondió con error:", result.error);
-            throw new Error(result.error || "Error desconocido al guardar en Google.");
+        // 1. Guardar en Google Sheets (mantenemos flujo actual)
+        if (scriptUrl) {
+            try {
+                const response = await fetch(scriptUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (!result.success) console.error("Error Google Script:", result.error);
+            } catch (e) {
+                console.error("Error enviando a Google Sheets:", e.message);
+            }
         }
+
+        // 2. Guardar en Supabase
+        const dni = String(formData['DNI'] || '').trim();
+        const fechaCierre = formData['FECHA'] || new Date().toISOString().split('T')[0];
+
+        const supabaseData = {
+            dni,
+            apellido_y_nombre: `${apellido} ${nombre}`.trim(),
+            fechax: fechaCierre,
+            edad: formData['Edad'] || null,
+            sexo: formData['Sexo'] || null,
+            efector: formData['Efector'] || 'IAPOS ESP PREST',
+            tipo: 'Pediatria',
+            profesional: nombreProfesional,
+            marca_temporal: new Date().toISOString(),
+            presion_arterial: formData['Presión Arterial'] || null,
+            obs_presion_arterial: formData['Observaciones - Presión Arterial'] || null,
+            imc: formData['IMC'] || null,
+            obs_imc: formData['Observaciones - IMC'] || null,
+            alimentacion_saludable: formData['Alimentación saludable'] || null,
+            obs_alimentacion: formData['Observaciones - Alimentación saludable'] || null,
+            actividad_fisica: formData['Actividad física'] || null,
+            obs_actividad_fisica: formData['Observaciones - Actividad física'] || null,
+            violencia: formData['Violencia'] || null,
+            obs_violencia: formData['Observaciones - Violencia'] || null,
+            ef: formData['Examen Fisico'] || null,
+            obs_ef: formData['Observaciones - Examen Fisico'] || null,
+            talla: formData['Talla'] || null,
+            obs_talla: formData['Observaciones - Talla'] || null,
+            salud_ocular: formData['Salud Ocular'] || null,
+            obs_salud_ocular: formData['Observaciones - Salud Ocular'] || null,
+            audicion: formData['Audición'] || null,
+            obs_audicion: formData['Observaciones - Audición'] || null,
+            salud_cardiovascular: formData['Salud Cardiovascular'] || null,
+            obs_salud_cardiovascular: formData['Observaciones - Salud Cardiovascular'] || null,
+            educacion_sexual: formData['Educación sexual'] || null,
+            obs_educacion_sexual: formData['Observaciones - Educación sexual'] || null,
+            salud_mental_integral: formData['Salud Mental Integral'] || null,
+            obs_salud_mental: formData['Observaciones - Salud Mental'] || null,
+            consumo_sustancias: formData['Consumo de sustancias problemáticas'] || null,
+            obs_consumo_sustancias: formData['Observaciones - Consumo de sustancias'] || null,
+            pesquisa_dislipemia: formData['Pesquisa de Dislipemia'] || null,
+            obs_pesquisa_dislipemia: formData['Observaciones - Dislipemia'] || null,
+            sindrome_metabolico: formData['Síndrome Metabólico'] || null,
+            obs_sindrome_metabolico: formData['Observaciones - Síndrome Metabólico'] || null,
+            escoliosis: formData['Escoliosis'] || null,
+            obs_escoliosis: formData['Observaciones - Escoliosis'] || null,
+            cancer_cervico_uterino: formData['Cáncer cérvico uterino'] || null,
+            obs_cancer_cervico_uterino: formData['Observaciones - Cáncer cérvico uterino'] || null,
+            cancer_piel: formData['Cáncer de piel'] || null,
+            obs_cancer_piel: formData['Observaciones - Cáncer de piel'] || null,
+            desarrollo_escolar: formData['Desarrollo escolar y aprendizaje'] || null,
+            obs_desarrollo_escolar: formData['Observaciones - Desarrollo escolar'] || null,
+            uso_pantallas: formData['Uso de pantallas'] || null,
+            horas_pantallas: formData['Cantidad de horas diarias'] || null,
+            obs_uso_pantallas: formData['Observaciones - Uso de pantallas'] || null,
+            control_vacunas: formData['Control de vacunas de calendario'] || null,
+            obs_control_vacunas: formData['Observaciones - Vacunas'] || null,
+            control_odontologico_ninos: formData['Control Odontológico - Niños'] || null,
+            obs_control_odontologico_ninos: formData['Observaciones - Control Odontológico'] || null
+        };
+
+        const { error: supabaseError } = await supabase
+            .from('historial_dia_preventivo')
+            .insert(supabaseData);
+
+        if (supabaseError) {
+            console.error('Error Supabase pediatría:', supabaseError);
+        } else {
+            console.log('✅ Cierre pediatría guardado en Supabase para DNI:', dni);
+        }
+
+        res.json({ success: true, message: "Ficha guardada exitosamente." });
 
     } catch (error) {
         console.error("Error al guardar cierre pediatría:", error);
         res.status(500).json({ success: false, error: "Error interno al guardar.", details: error.message });
     }
 });
-
-
-
 // >>>>> CAMBIO 3: NUEVA FUNCIÓN DE INICIALIZACIÓN PARA IAPOS <<<<<
 async function initializeIaposSheet() {
     try {
