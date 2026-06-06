@@ -298,7 +298,7 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
             edad: formData['Edad'] || null,
             sexo: formData['Sexo'] || null,
             efector: formData['Efector'] || 'IAPOS ESP PREST',
-            tipo: 'Pediatria',
+            tipo: 'Pediatrico',
             profesional: nombreProfesional,
             marca_temporal: new Date().toISOString(),
             presion_arterial: formData['Presión Arterial'] || null,
