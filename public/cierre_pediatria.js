@@ -298,19 +298,69 @@ document.addEventListener('DOMContentLoaded', () => {
         cargarDatosBtn.disabled = !dniInput.value.trim();
         if(!dniInput.value.trim()) resetForm();
     });
+cargarDatosBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const dni = dniInput.value.trim();
+    if(!dni) return;
 
-    cargarDatosBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        const dni = dniInput.value.trim();
-        if(!dni) return;
-        
-        currentPatientDNI = dni; // GUARDAMOS EL DNI GLOBALMENTE
-        dniDisplayInput.value = dni; // Llenamos el input oculto/visible de la fase 2
-        
-        // Cambio de pantalla: Buscador -> Datos
+    cargarDatosBtn.disabled = true;
+    cargarDatosBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Verificando...';
+
+    try {
+        // 1. Verificar IAPOS
+        const res = await fetch('/verificar-afiliado/' + dni);
+        const data = await res.json();
+
+        if (!data.esActivo) {
+            alert('DNI no corresponde a un afiliado activo de IAPOS.');
+            cargarDatosBtn.disabled = false;
+            cargarDatosBtn.innerHTML = '<i class="fas fa-search mr-2"></i> Cargar Ficha';
+            return;
+        }
+
+        // Autocompletar nombre y apellido
+        if (data.nombre) {
+            const partes = data.nombre.trim().split(',');
+            if (partes.length >= 2) {
+                if (!pacienteApellidoInput.value) pacienteApellidoInput.value = partes[0].trim();
+                if (!pacienteNombreInput.value) pacienteNombreInput.value = partes[1].trim();
+            }
+        }
+
+        // 2. Alertas clínicas
+        const alertasRes = await fetch('/alertas-clinicas/' + dni);
+        const alertasData = await alertasRes.json();
+
+        if ((alertasData.alertas || []).length > 0) {
+            let html = '<div style="background:#fffbeb; border-left:4px solid #d97706; padding:10px 14px; border-radius:8px; margin-bottom:12px;">';
+            html += '<p style="font-size:12px; font-weight:700; color:#92400e; margin-bottom:6px;"><i class="fas fa-exclamation-triangle" style="margin-right:6px"></i>Alertas clínicas:</p>';
+            alertasData.alertas.forEach(a => {
+                const color = a.tipo === 'URGENTE' ? '#dc2626' : a.tipo === 'RIESGO' ? '#d97706' : '#0448a2';
+                html += `<p style="font-size:12px; color:${color}; margin:3px 0;">${a.mensaje}</p>`;
+            });
+            html += '</div>';
+            const alertaBox = document.createElement('div');
+            alertaBox.id = 'alertas-clinicas';
+            alertaBox.innerHTML = html;
+            patientDataSection.prepend(alertaBox);
+        }
+
+        currentPatientDNI = dni;
+        dniDisplayInput.value = dni;
         searchSection.classList.add('hidden');
         patientDataSection.classList.remove('hidden');
-    });
+
+    } catch(e) {
+        alert('No se pudo verificar la afiliación. Continuá de todos modos.');
+        currentPatientDNI = dni;
+        dniDisplayInput.value = dni;
+        searchSection.classList.add('hidden');
+        patientDataSection.classList.remove('hidden');
+    } finally {
+        cargarDatosBtn.disabled = false;
+        cargarDatosBtn.innerHTML = '<i class="fas fa-search mr-2"></i> Cargar Ficha';
+    }
+});
 // --- BOTÓN CONFIRMAR DATOS (EL PORTERO DE SEGURIDAD) ---
     btnConfirmarDatos.addEventListener('click', () => {
         // 1. Recolectar valores

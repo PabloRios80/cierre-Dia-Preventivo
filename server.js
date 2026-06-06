@@ -222,12 +222,6 @@ app.get('/api/config', (req, res) => {
     res.json({ apiBaseUrl: API_BASE_URL });
 });
 
-
-// Iniciar el servidor
-app.listen(PORT, () => {
-    console.log(`Servidor escuchando en ${API_BASE_URL}`);
-});
-
 app.post('/api/enfermeria/guardar', async (req, res) => {
     try {
         // La conexión ya está inicializada al arrancar el servidor
@@ -1180,10 +1174,85 @@ async function initializeAllSheets() {
         throw error; 
     }
 }
+// ── VERIFICAR AFILIADO IAPOS ──
+app.get('/verificar-afiliado/:dni', async (req, res) => {
+    const dni = req.params.dni;
+    const hoy = new Date().toISOString().split('T')[0];
+    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
+    <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+            <BEWsValidaAfi.Execute xmlns="IAPOS_WS">
+                <Usuario>CONSULTAPDP</Usuario>
+                <Passwd>1Qaz</Passwd>
+                <Nafiliado>${dni}</Nafiliado>
+                <Badocnumdo>${dni}</Badocnumdo>
+                <Tidocodigo_de_documento>96</Tidocodigo_de_documento>
+                <Ogorcodigo>1</Ogorcodigo>
+                <Fechpresta>${hoy}</Fechpresta>
+            </BEWsValidaAfi.Execute>
+        </soap:Body>
+    </soap:Envelope>`;
+    try {
+        const response = await axios.post(
+            'https://aswe.santafe.gov.ar/iapos-sw-srvt/servlet/abewsvalidaafi',
+            soapBody,
+            {
+                headers: {
+                    'Content-Type': 'text/xml; charset=utf-8',
+                    'SOAPAction': 'IAPOS_WSaction/ABEWSVALIDAAFI.Execute'
+                },
+                timeout: 10000
+            }
+        );
+        const xml = response.data;
+        const get = (tag) => {
+            const m = xml.match(new RegExp(`<${tag}[^>]*>([^<]*)<\/${tag}>`));
+            return m ? m[1].trim() : null;
+        };
+        const estado = get('Estado');
+        res.json({
+            esActivo: estado === 'A',
+            estado,
+            nombre: get('Apenom'),
+            edad: get('Edad'),
+            sexo: get('Sexo'),
+            localidad: get('Localidad'),
+            mensaje: get('Msgdsc')
+        });
+    } catch(e) {
+        res.status(500).json({ esActivo: false, error: e.message });
+    }
+});
 
+// ── ALERTAS CLÍNICAS ──
+app.get('/alertas-clinicas/:dni', async (req, res) => {
+    const { dni } = req.params;
+    try {
+        const { data: afiliado } = await supabase
+            .from('afiliados').select('*').eq('dni', dni).single();
 
+        const { data: ultimoDP } = await supabase
+            .from('historial_dia_preventivo').select('*')
+            .eq('dni', dni).order('fechax', { ascending: false }).limit(1).single();
 
+        const alertas = [];
 
+        if (afiliado?.hipertension === 'si')
+            alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara hipertensión en hoja de vida' });
+        if (afiliado?.diabetes === 'si')
+            alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara diabetes en hoja de vida' });
+        if (afiliado?.colesterol === 'si')
+            alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara colesterol alto en hoja de vida' });
+        if (afiliado?.fuma && afiliado.fuma !== 'nunca')
+            alertas.push({ tipo: 'INFO', mensaje: `ℹ️ Fumador declarado: ${afiliado.fuma}` });
+        if (ultimoDP?.presion_arterial === 'Hipertensión')
+            alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Hipertensión registrada en DP anterior' });
+
+        res.json({ success: true, afiliado: afiliado || null, alertas });
+    } catch(e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 // --- NUEVO ARRANQUE DIRECTO (Solo Pediatría) ---
 // Arrancamos el servidor sin esperar a la hoja de cálculo vieja
 app.listen(PORT, () => {
