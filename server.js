@@ -55,12 +55,6 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-// >>>>> AGREGAR TODO ESTO AQUÍ ABAJO <<<<<
-const session = require('express-session');
-const passport = require('passport');
-const GoogleStrategy = require('passport-google-oauth20').Strategy;
-
-
 // ====================================================================
 // FUNCIONES DE CONEXIÓN Y UTILIDAD (Credenciales de Service Account)
 // ====================================================================
@@ -134,66 +128,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use(express.static('public')); // Sirve archivos estáticos desde la carpeta 'public'
-
-
-
-// --- CONFIGURACIÓN DE MIDDLEWARE PARA AUTENTICACIÓN ---
-app.use(session({
-    secret: 'tu-secreto-seguro', // Cambia esto por una cadena de caracteres única y segura
-    resave: false,
-    saveUninitialized: true
-}));
-app.use(passport.initialize());
-app.use(passport.session());
-
-// --- RUTAS DE AUTENTICACIÓN ---
-app.get('/auth/google',
-    // Usa la opción 'state' para guardar la URL de la página actual
-    (req, res, next) => {
-        req.session.returnTo = req.query.returnTo || '/';
-        next();
-    },
-    passport.authenticate('google', { scope: ['profile', 'email'] })
-);
-
-app.get('/auth/google/callback',
-    passport.authenticate('google', { failureRedirect: '/' }),
-    (req, res) => {
-        // CAMBIO: Forzamos la redirección directa al Portal Médico
-        // Ya no preguntamos "a dónde iba", lo mandamos directo al menú.
-        res.redirect('/index-medico.html');
-    }
-);
-
-// --- ESTRATEGIA DE AUTENTICACIÓN DE GOOGLE ---
-passport.use(new GoogleStrategy({
-    clientID: process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: process.env.GOOGLE_CALLBACK_URL
-}, (accessToken, refreshToken, profile, done) => {
-    // Aquí puedes procesar el perfil del usuario de Google
-    // Por ejemplo, puedes buscar si el correo del profesional existe en una lista de usuarios autorizados.
-    return done(null, profile);
-}));
-
-// Funciones para serializar y deserializar el usuario en la sesión
-passport.serializeUser((user, done) => {
-    done(null, user);
-});
-
-passport.deserializeUser((obj, done) => {
-    done(null, obj);
-});
-
-// Middleware para verificar autenticación
-function ensureAuthenticated(req, res, next) {
-    if (req.isAuthenticated()) {
-        return next();
-    }
-    // Redirige a la página de login si no está autenticado
-    res.redirect(`/login.html?returnTo=${encodeURIComponent(req.originalUrl)}`);
-}
-
 
 // Agrega esta nueva ruta en tu server.js, junto a tus otras rutas.
 // Asegúrate de que esta ruta esté antes de app.use(express.static('public')).
