@@ -249,16 +249,14 @@ app.post('/api/enfermeria/guardar', async (req, res) => {
         res.status(500).json({ message: 'Error interno del servidor.' });
     }
 });
-app.post('/api/cierre-pediatria/guardar', async (req, res) => {
-    if (!req.isAuthenticated()) {
-        return res.status(401).json({ success: false, error: "Usuario no autenticado." });
-    }
 
+app.post('/api/cierre-pediatria/guardar', async (req, res) => {
+    
     const scriptUrl = process.env.URL_SCRIPT_PEDIATRIA;
 
     try {
         const formData = req.body;
-        const nombreProfesional = req.user.displayName || formData['Profesional'] || 'Desconocido';
+        const nombreProfesional = formData['Profesional'] || 'Desconocido';
 
         const nombreCompleto = (formData['Apellido_Nombre'] || '').trim();
         const primerEspacio = nombreCompleto.indexOf(' ');
@@ -1051,17 +1049,8 @@ app.post('/api/seguimiento/guardar', async (req, res) => {
 }); // <--- ESTA ES LA LLAVE DE CIERRE CORRECTA PARA LA RUTA DE SEGUIMIENTO
 // *************************************************************************
 app.post('/api/cierre/guardar', async (req, res) => {
-    // AHORA VERIFICA SI EL USUARIO ESTÁ AUTENTICADO
-    if (!req.isAuthenticated()) {
-        console.error('SERVER ERROR: Intento de guardar formulario de cierre sin autenticación.');
-        return res.status(401).json({ success: false, error: 'Acceso no autorizado. Por favor, inicie sesión.' });
-    }
-    
-    // OBTENEMOS EL NOMBRE DEL PROFESIONAL AUTENTICADO
-    const profesionalName = req.user.displayName;
-
     const formData = req.body;
-    
+    const profesionalName = formData['Profesional'] || 'Desconocido';
     const dni = String(formData['DNI']).trim();
     const fechaCierre = String(formData['Fecha_cierre_dp']).trim();
 
@@ -1114,12 +1103,7 @@ app.post('/api/cierre/guardar', async (req, res) => {
 app.post('/guardar-consulta', async (req, res) => {
     console.log('Datos recibidos del cliente:', req.body);
 
-    if (!req.isAuthenticated()) {
-        console.error('SERVER ERROR: Intento de guardar consulta sin autenticación.');
-        return res.status(401).json({ success: false, message: 'Acceso no autorizado. Por favor, inicie sesión.' });
-    }
-
-    const profesionalNombre = req.user.displayName; 
+    const profesionalNombre = req.body['Profesional'] || 'Desconocido';
 
     console.log('Solicitud para guardar consulta recibida por el profesional:', profesionalNombre);
 

@@ -103,22 +103,15 @@ document.addEventListener('DOMContentLoaded', () => {
     checkAuthStatus();
     const today = new Date().toISOString().split('T')[0];
     if(fechaCierreInput) fechaCierreInput.value = today;
-
-    async function checkAuthStatus() {
-        try {
-            const response = await fetch('/api/user');
-            const data = await response.json();
-            if (data.isLoggedIn) {
-                mainContent.classList.remove('hidden');
-                unauthorizedMessage.classList.add('hidden');
-                profesionalInput.value = data.user.name;
-            } else {
-                mainContent.classList.add('hidden');
-                unauthorizedMessage.classList.remove('hidden');
-            }
-        } catch (error) {
-            console.error('Error Auth:', error);
+    function checkAuthStatus() {
+        const prof = window.dpProfesional;
+        if (prof && prof.nombre) {
+            mainContent.classList.remove('hidden');
+            unauthorizedMessage.classList.add('hidden');
+            profesionalInput.value = `${prof.nombre} ${prof.apellido}`;
+        } else {
             mainContent.classList.add('hidden');
+            unauthorizedMessage.classList.remove('hidden');
         }
     }
 

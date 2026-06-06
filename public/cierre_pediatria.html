@@ -7,6 +7,35 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="styles.css">
+    <script>
+    (function() {
+        const params = new URLSearchParams(window.location.search);
+        const tokenUrl = params.get('token');
+        if (tokenUrl) {
+            localStorage.setItem('dpToken', tokenUrl);
+            window.history.replaceState({}, '', window.location.pathname);
+        }
+        const token = localStorage.getItem('dpToken');
+        if (!token) {
+            window.location.href = 'https://acceso.diapreventivoiapos.com/login.html';
+            return;
+        }
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            const ahora = Math.floor(Date.now() / 1000);
+            if (payload.exp && payload.exp < ahora) {
+                localStorage.removeItem('dpToken');
+                localStorage.removeItem('dpProfesional');
+                window.location.href = 'https://acceso.diapreventivoiapos.com/login.html';
+                return;
+            }
+            window.dpProfesional = payload;
+        } catch(e) {
+            localStorage.removeItem('dpToken');
+            window.location.href = 'https://acceso.diapreventivoiapos.com/login.html';
+        }
+    })();
+    </script>
 </head>
 <body class="bg-gray-50 flex flex-col min-h-screen font-sans">
 
@@ -39,7 +68,7 @@
             <i class="fas fa-lock text-5xl text-red-500 mb-4"></i>
             <h2 class="text-2xl font-bold text-gray-800 mb-2">Acceso Restringido</h2>
             <p class="text-gray-600 mb-6">Debe iniciar sesión como profesional.</p>
-            <a href="/auth/google" class="inline-block bg-blue-600 text-white px-6 py-2 rounded-full hover:bg-blue-700 transition">Iniciar Sesión</a>
+            <a href="https://acceso.diapreventivoiapos.com/login.html" class="inline-block bg-blue-600 text-white px-6 py-2 rounded-full hover:bg-blue-700 transition">Iniciar Sesión</a>
         </div>
     </div>
 

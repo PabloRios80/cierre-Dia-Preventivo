@@ -2,6 +2,30 @@
 <html lang="es">
 
 <head>
+    <script>
+    (function() {
+        const token = localStorage.getItem('dpToken');
+        if (!token) {
+            window.location.href = 'https://acceso.diapreventivoiapos.com/login.html?redirect=medico';
+            return;
+        }
+        try {
+            // Decodificar token sin verificar (solo para mostrar nombre)
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            const ahora = Math.floor(Date.now() / 1000);
+            if (payload.exp && payload.exp < ahora) {
+                localStorage.removeItem('dpToken');
+                localStorage.removeItem('dpProfesional');
+                window.location.href = 'https://acceso.diapreventivoiapos.com/login.html?redirect=medico';
+                return;
+            }
+            window.dpProfesional = payload;
+        } catch(e) {
+            localStorage.removeItem('dpToken');
+            window.location.href = 'https://acceso.diapreventivoiapos.com/login.html?redirect=medico';
+        }
+    })();
+    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Panel de Pediatría - IAPOS</title>
@@ -45,6 +69,7 @@
                     <h1 class="text-xl md:text-2xl font-bold tracking-tight text-white drop-shadow-sm text-right leading-tight">
                         Programa Día Preventivo
                     </h1>
+                    <p id="nombreProfesional" class="text-blue-100 text-xs text-right"></p>
                     <p class="text-blue-100 text-sm text-right hidden md:block">Cuidando el futuro</p>
                 </div>
             </div>
@@ -128,6 +153,14 @@
             </p>
         </div>
     </footer>
+
+    <script>
+    const prof = window.dpProfesional;
+    if (prof) {
+        document.getElementById('nombreProfesional').textContent = 
+            (prof.nombre || '') + ' ' + (prof.apellido || '');
+    }
+    </script>
 
     <script src="app.js?v=2.0"></script>
 </body>
