@@ -125,13 +125,6 @@ function cerrarSesionGlobal() {
 }
 
     <script src="cierre-formulario.js"></script>
-    <script>
-    function cerrarSesionGlobal() {
-        if (!confirm('¿Cerrar sesión?')) return;
-        localStorage.removeItem('dpToken');
-        localStorage.removeItem('dpProfesional');
-        window.location.href = 'https://acceso.diapreventivoiapos.com';
-    }
-    </script>
+    
 </body>
 </html>
