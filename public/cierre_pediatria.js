@@ -547,6 +547,13 @@ cargarDatosBtn.addEventListener('click', async (e) => {
         }
     }
 
+    function cerrarSesionGlobal() {
+        if (!confirm('¿Cerrar sesión?')) return;
+        localStorage.removeItem('dpToken');
+        localStorage.removeItem('dpProfesional');
+        window.location.href = 'https://acceso.diapreventivoiapos.com';
+    }
+
     closeModalBtn.addEventListener('click', () => estudiosModal.classList.add('hidden'));
     modalCloseButtonBottom.addEventListener('click', () => estudiosModal.classList.add('hidden'));
 });
