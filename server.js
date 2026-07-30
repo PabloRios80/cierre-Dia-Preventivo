@@ -1157,7 +1157,6 @@ app.get('/verificar-afiliado/:dni', async (req, res) => {
         res.status(500).json({ esActivo: false, error: e.message });
     }
 });
-
 // ── ALERTAS CLÍNICAS ──
 app.get('/alertas-clinicas/:dni', async (req, res) => {
     const { dni } = req.params;
@@ -1165,24 +1164,70 @@ app.get('/alertas-clinicas/:dni', async (req, res) => {
         const { data: afiliado } = await supabase
             .from('afiliados').select('*').eq('dni', dni).single();
 
+        let menor = null;
+        if (!afiliado) {
+            const { data: afiliadoMenor } = await supabase
+                .from('afiliados_menores')
+                .select('*')
+                .eq('dni', dni)
+                .order('fecha_carga', { ascending: false })
+                .limit(1)
+                .single();
+            menor = afiliadoMenor || null;
+        }
+
         const { data: ultimoDP } = await supabase
             .from('historial_dia_preventivo').select('*')
             .eq('dni', dni).order('fechax', { ascending: false }).limit(1).single();
 
         const alertas = [];
 
-        if (afiliado?.hipertension === 'si')
-            alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara hipertensión en hoja de vida' });
-        if (afiliado?.diabetes === 'si')
-            alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara diabetes en hoja de vida' });
-        if (afiliado?.colesterol === 'si')
-            alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara colesterol alto en hoja de vida' });
-        if (afiliado?.fuma && afiliado.fuma !== 'nunca')
-            alertas.push({ tipo: 'INFO', mensaje: `ℹ️ Fumador declarado: ${afiliado.fuma}` });
+        if (afiliado) {
+            if (afiliado?.hipertension === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara hipertensión en hoja de vida' });
+            if (afiliado?.diabetes === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara diabetes en hoja de vida' });
+            if (afiliado?.colesterol === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara colesterol alto en hoja de vida' });
+            if (afiliado?.fuma && afiliado.fuma !== 'nunca')
+                alertas.push({ tipo: 'INFO', mensaje: `ℹ️ Fumador declarado: ${afiliado.fuma}` });
+        } else if (menor) {
+            if (menor.fam_hipertension === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de hipertensión' });
+            if (menor.fam_diabetes === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de diabetes' });
+            if (menor.fam_obesidad === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de obesidad' });
+            if (menor.fam_cardio === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar cardiovascular' });
+            if (menor.fam_mental === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de salud mental' });
+            if (menor.fam_adicciones === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de adicciones' });
+            if (menor.fam_cancer === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de cáncer' });
+            if (menor.tabaco === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Consume o ha consumido tabaco' });
+            if (menor.alcohol === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Consume o ha consumido alcohol' });
+            if (menor.sustancias === 'si')
+                alertas.push({ tipo: 'URGENTE', mensaje: '🔴 Consume o ha consumido otras sustancias' });
+            if (menor.violencia === 'si')
+                alertas.push({ tipo: 'URGENTE', mensaje: '🔴 Refiere situaciones de violencia o abuso' });
+            if (menor.tristeza === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Episodios de tristeza/aislamiento prolongados' });
+            if (menor.alim_trastorno === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Preocupación por peso/alimentación' });
+            if (menor.vacunas === 'no')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Vacunas del calendario no están al día' });
+            if (menor.condicion_salud === 'si')
+                alertas.push({ tipo: 'URGENTE', mensaje: `🔴 Condición de salud diagnosticada${menor.condicion_detalle ? ': ' + menor.condicion_detalle : ''}` });
+        }
+
         if (ultimoDP?.presion_arterial === 'Hipertensión')
             alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Hipertensión registrada en DP anterior' });
 
-        res.json({ success: true, afiliado: afiliado || null, alertas });
+        res.json({ success: true, afiliado: afiliado || menor || null, alertas });
     } catch(e) {
         res.status(500).json({ success: false, error: e.message });
     }
