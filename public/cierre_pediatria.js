@@ -431,6 +431,7 @@ cargarDatosBtn.addEventListener('click', async (e) => {
         const formData = {
             'DNI': dniDisplayInput.value,
             'Efector': efectorInput.value,
+            'id_sede_dp': efectorInput.selectedOptions[0]?.dataset.sede || null,
             'Apellido': pacienteApellidoInput.value,
             'Nombre': pacienteNombreInput.value,
             'Edad': pacienteEdadInput.value,

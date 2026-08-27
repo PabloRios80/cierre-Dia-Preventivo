@@ -232,6 +232,7 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
             edad: formData['Edad'] || null,
             sexo: formData['Sexo'] || null,
             efector: formData['Efector'] || 'IAPOS ESP PREST',
+            id_sede_dp: formData['id_sede_dp'] ? parseInt(formData['id_sede_dp']) : null,
             tipo: 'Pediatrico',
             profesional: nombreProfesional,
             marca_temporal: new Date().toISOString(),
@@ -290,6 +291,69 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
             console.error('Error Supabase pediatría:', supabaseError);
         } else {
             console.log('✅ Cierre pediatría guardado en Supabase para DNI:', dni);
+
+            // Registrar la consulta médica pediátrica como acción facturable,
+            // igual que en el cierre de adultos.
+            try {
+                const hoy = new Date().toISOString().split('T')[0];
+                const idSedeDp = formData['id_sede_dp'] ? parseInt(formData['id_sede_dp']) : null;
+
+                await supabase.from('practicas_autorizadas').insert({
+                    dni,
+                    nombre_completo: `${apellido} ${nombre}`.trim(),
+                    descripcion_practica: 'Consulta médica (Día Preventivo)',
+                    codigo_prestacion: 'B040101',
+                    estado: 'REALIZADA',
+                    fecha_autorizacion: hoy,
+                    fecha_carga: hoy,
+                    nombre_prestador: nombreProfesional,
+                    id_sede_dp: idSedeDp,
+                });
+                console.log('✅ Consulta médica pediátrica registrada como REALIZADA para DNI:', dni);
+
+                if (idSedeDp) {
+                    const { data: prestadoresCoordSede } = await supabase
+                        .from('prestador_sedes')
+                        .select('id_prestador')
+                        .eq('id_sede_dp', idSedeDp);
+
+                    let prestadorCoord = null;
+                    if (prestadoresCoordSede && prestadoresCoordSede.length > 0) {
+                        const idsPrestadores = prestadoresCoordSede.map((r) => r.id_prestador);
+                        const { data: institucionCoord } = await supabase
+                            .from('prestadores_institucionales')
+                            .select('id, nombre_institucion')
+                            .in('id', idsPrestadores)
+                            .eq('especialidad', 'coordinacion_dp')
+                            .maybeSingle();
+                        if (institucionCoord) {
+                            prestadorCoord = institucionCoord;
+                        }
+                    }
+
+                    if (prestadorCoord) {
+                        await supabase.from('practicas_autorizadas').insert({
+                            dni,
+                            nombre_completo: `${apellido} ${nombre}`.trim(),
+                            descripcion_practica: 'Módulo Día Preventivo',
+                            codigo_prestacion: '339159',
+                            estado: 'REALIZADA',
+                            fecha_autorizacion: hoy,
+                            fecha_carga: hoy,
+                            id_prestador: prestadorCoord.id,
+                            nombre_prestador: prestadorCoord.nombre_institucion,
+                            id_sede_dp: idSedeDp,
+                        });
+                        console.log('✅ Módulo Día Preventivo (339159) pediátrico registrado para DNI:', dni);
+                    } else {
+                        console.warn(`No hay prestador de Coordinación DP configurado para sede ${idSedeDp}`);
+                    }
+                } else {
+                    console.warn('No se recibió id_sede_dp, no se pudo asignar Módulo DP a ningún prestador.');
+                }
+            } catch (medErr) {
+                console.error('Error al registrar consulta médica/módulo pediátrico en practicas_autorizadas:', medErr.message);
+            }
         }
 
         res.json({ success: true, message: "Ficha guardada exitosamente." });
