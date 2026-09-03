@@ -225,6 +225,30 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
         const dni = String(formData['DNI'] || '').trim();
         const fechaCierre = formData['FECHA'] || new Date().toISOString().split('T')[0];
 
+        // La sede correcta es la de la ADMISIÓN REAL del paciente en
+        // tablero_dia (si existe una para hoy), no la del perfil/sesión
+        // del profesional que carga el cierre — mismo criterio que en
+        // el cierre de adultos. Si no tiene admisión de hoy (sedes que
+        // todavía no usan Tablero del Día), se cae al valor del form.
+        let idSedeDp = formData['id_sede_dp'] ? parseInt(formData['id_sede_dp']) : null;
+        try {
+            const hoyLocal = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Argentina/Buenos_Aires',
+            }).format(new Date());
+            const { data: admisionHoy } = await supabase
+                .from('tablero_dia')
+                .select('id_sede_dp')
+                .eq('dni', dni)
+                .eq('fecha', hoyLocal)
+                .not('id_sede_dp', 'is', null)
+                .maybeSingle();
+            if (admisionHoy?.id_sede_dp) {
+                idSedeDp = admisionHoy.id_sede_dp;
+            }
+        } catch (eSedeReal) {
+            console.warn('No se pudo verificar la sede real por tablero_dia, se usa la del profesional:', eSedeReal.message);
+        }
+
         const supabaseData = {
             dni,
             apellido_y_nombre: `${apellido} ${nombre}`.trim(),
@@ -232,7 +256,7 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
             edad: formData['Edad'] || null,
             sexo: formData['Sexo'] || null,
             efector: formData['Efector'] || 'IAPOS ESP PREST',
-            id_sede_dp: formData['id_sede_dp'] ? parseInt(formData['id_sede_dp']) : null,
+            id_sede_dp: idSedeDp,
             tipo: 'Pediatrico',
             profesional: nombreProfesional,
             marca_temporal: new Date().toISOString(),
@@ -296,7 +320,8 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
             // igual que en el cierre de adultos.
             try {
                 const hoy = new Date().toISOString().split('T')[0];
-                const idSedeDp = formData['id_sede_dp'] ? parseInt(formData['id_sede_dp']) : null;
+                // Reutiliza el idSedeDp ya calculado arriba (con prioridad a
+                // la admisión real en tablero_dia), no vuelve a leer del form.
 
                 await supabase.from('practicas_autorizadas').insert({
                     dni,
