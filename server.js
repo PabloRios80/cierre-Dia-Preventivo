@@ -184,6 +184,36 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
 
     try {
         const formData = req.body;
+        const dniParaValidar = String(formData['DNI'] || '').trim();
+
+        // ── VALIDACIÓN SERVER-SIDE DEL BLOQUEO ANUAL ──
+        // No confiar solo en que el frontend respete el aviso — se
+        // verifica de nuevo acá, igual que en el cierre de adultos.
+        if (dniParaValidar) {
+            const { data: modulosPreviosGuardar } = await supabase
+                .from('practicas_autorizadas')
+                .select('fecha_carga')
+                .eq('dni', dniParaValidar)
+                .eq('descripcion_practica', 'Módulo Día Preventivo')
+                .eq('estado', 'REALIZADA')
+                .not('fecha_carga', 'is', null)
+                .order('fecha_carga', { ascending: false })
+                .limit(1);
+
+            if (modulosPreviosGuardar && modulosPreviosGuardar.length > 0) {
+                const fechaUltimoCierreGuardar = new Date(modulosPreviosGuardar[0].fecha_carga);
+                const diasDesdeUltimoCierreGuardar = Math.floor(
+                    (Date.now() - fechaUltimoCierreGuardar.getTime()) / (1000 * 60 * 60 * 24)
+                );
+                if (diasDesdeUltimoCierreGuardar < 365) {
+                    return res.status(409).json({
+                        success: false,
+                        error: `No se puede guardar: este paciente ya tiene un Día Preventivo cerrado el ${fechaUltimoCierreGuardar.toISOString().split('T')[0]}. Faltan ${365 - diasDesdeUltimoCierreGuardar} días para cumplir el año.`,
+                    });
+                }
+            }
+        }
+
         const nombreProfesional = formData['Profesional'] || 'Desconocido';
 
         const nombreCompleto = (formData['Apellido_Nombre'] || '').trim();
@@ -249,13 +279,27 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
             console.warn('No se pudo verificar la sede real por tablero_dia, se usa la del profesional:', eSedeReal.message);
         }
 
+        // El efector se deriva de la sede real, ya no depende de que el
+        // profesional lo elija a mano en el formulario (fuente de errores,
+        // como el caso de un médico con la sede vieja en su sesión).
+        const SEDES_EFECTOR_PED = {
+            1: 'IAPOS ESP PREST',
+            2: 'ATEM',
+            3: 'Hospital Italiano Rosario',
+            4: 'Delta',
+            5: 'Sunchales',
+            6: 'Coronda',
+            7: 'Reconquista',
+        };
+        const efectorReal = SEDES_EFECTOR_PED[idSedeDp] || 'IAPOS ESP PREST';
+
         const supabaseData = {
             dni,
             apellido_y_nombre: `${apellido} ${nombre}`.trim(),
             fechax: fechaCierre,
             edad: formData['Edad'] || null,
             sexo: formData['Sexo'] || null,
-            efector: formData['Efector'] || 'IAPOS ESP PREST',
+            efector: efectorReal,
             id_sede_dp: idSedeDp,
             tipo: 'Pediatrico',
             profesional: nombreProfesional,
@@ -1316,7 +1360,36 @@ app.get('/alertas-clinicas/:dni', async (req, res) => {
         if (ultimoDP?.presion_arterial === 'Hipertensión')
             alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Hipertensión registrada en DP anterior' });
 
-        res.json({ success: true, afiliado: afiliado || menor || null, alertas });
+        // ── BLOQUEO POR CIERRE RECIENTE (menos de 1 año) ──
+        // Mismo criterio que en el cierre de adultos — acá faltaba por
+        // completo, lo que permitía cerrar el mismo paciente pediátrico
+        // varias veces sin ningún aviso.
+        let bloqueoCierreAnual = null;
+        const { data: modulosPrevios } = await supabase
+            .from('practicas_autorizadas')
+            .select('fecha_carga')
+            .eq('dni', dni)
+            .eq('descripcion_practica', 'Módulo Día Preventivo')
+            .eq('estado', 'REALIZADA')
+            .not('fecha_carga', 'is', null)
+            .order('fecha_carga', { ascending: false })
+            .limit(1);
+
+        if (modulosPrevios && modulosPrevios.length > 0) {
+            const fechaUltimoCierre = new Date(modulosPrevios[0].fecha_carga);
+            const diasDesdeUltimoCierre = Math.floor(
+                (Date.now() - fechaUltimoCierre.getTime()) / (1000 * 60 * 60 * 24)
+            );
+            if (diasDesdeUltimoCierre < 365) {
+                bloqueoCierreAnual = {
+                    bloqueado: true,
+                    fechaUltimoCierre: fechaUltimoCierre.toISOString().split('T')[0],
+                    diasRestantes: 365 - diasDesdeUltimoCierre,
+                };
+            }
+        }
+
+        res.json({ success: true, afiliado: afiliado || menor || null, alertas, bloqueoCierreAnual });
     } catch(e) {
         res.status(500).json({ success: false, error: e.message });
     }

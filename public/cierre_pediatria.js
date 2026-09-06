@@ -4,6 +4,26 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentStep = 0; 
     let formSteps = []; 
 
+    function mostrarCartelBloqueoAnualPed(bloqueo) {
+        let cartel = document.getElementById('cartelBloqueoAnualPed');
+        if (!bloqueo) {
+            if (cartel) cartel.remove();
+            return;
+        }
+        const fechaLegible = new Date(bloqueo.fechaUltimoCierre + 'T00:00:00').toLocaleDateString('es-AR');
+        const html = `
+      <div id="cartelBloqueoAnualPed" style="position: sticky; top: 0; z-index: 50; background: #dc2626; color: white; padding: 14px 20px; border-radius: 8px; margin-bottom: 16px; font-weight: bold; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.2);">
+        ⛔ Este paciente ya tiene un Día Preventivo cerrado el ${fechaLegible}.
+        Todavía faltan ${bloqueo.diasRestantes} días para cumplir el año. Podés revisar el caso, pero NO se va a poder guardar un nuevo cierre.
+      </div>`;
+        const main = document.getElementById('main-content') || document.body;
+        if (cartel) {
+            cartel.outerHTML = html;
+        } else {
+            main.insertAdjacentHTML('afterbegin', html);
+        }
+    }
+
     // --- ELEMENTOS DOM ---
     const unauthorizedMessage = document.getElementById('unauthorized-message');
     const mainContent = document.getElementById('main-content');
@@ -18,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const dniInput = document.getElementById('paciente-dni');
     const cargarDatosBtn = document.getElementById('cargar-datos-btn');
     const dniDisplayInput = document.getElementById('dni-input'); // El que se guarda
-    const efectorInput = document.getElementById('efector-input');
+    const efectorInput = null; // Campo eliminado — la sede ahora se toma automáticamente
     const pacienteApellidoInput = document.getElementById('paciente-apellido');
     const pacienteNombreInput = document.getElementById('paciente-nombre');
     const pacienteEdadInput = document.getElementById('paciente-edad');
@@ -331,6 +351,12 @@ cargarDatosBtn.addEventListener('click', async (e) => {
         const alertasRes = await fetch('/alertas-clinicas/' + dni);
         const alertasData = await alertasRes.json();
 
+        // ── AVISO POR CIERRE RECIENTE (menos de 1 año) ──
+        window._cierreBloqueadoAnual = alertasData.bloqueoCierreAnual?.bloqueado
+            ? alertasData.bloqueoCierreAnual
+            : null;
+        mostrarCartelBloqueoAnualPed(window._cierreBloqueadoAnual);
+
         if ((alertasData.alertas || []).length > 0) {
             let html = '<div style="background:#fffbeb; border-left:4px solid #d97706; padding:10px 14px; border-radius:8px; margin-bottom:12px;">';
             html += '<p style="font-size:12px; font-weight:700; color:#92400e; margin-bottom:6px;"><i class="fas fa-exclamation-triangle" style="margin-right:6px"></i>Alertas clínicas:</p>';
@@ -368,12 +394,11 @@ cargarDatosBtn.addEventListener('click', async (e) => {
         const nombre = pacienteNombreInput.value.trim();
         const edadTexto = pacienteEdadInput.value.trim();
         const sexo = pacienteSexoSelect.value;
-        const efector = efectorInput.value;
         const edad = parseInt(edadTexto);
 
         // 2. Validar que no falten datos
-        if (!apellido || !nombre || !edadTexto || !sexo || !efector) {
-            alert("Por favor complete todos los datos del paciente (Apellido, Nombre, Edad, Sexo, Efector).");
+        if (!apellido || !nombre || !edadTexto || !sexo) {
+            alert("Por favor complete todos los datos del paciente (Apellido, Nombre, Edad, Sexo).");
             return; // Frena aquí si falta algo
         }
 
@@ -430,8 +455,7 @@ cargarDatosBtn.addEventListener('click', async (e) => {
         // Recolectar Datos Fijos (aunque estén ocultos en la pantalla anterior, existen en el DOM)
         const formData = {
             'DNI': dniDisplayInput.value,
-            'Efector': efectorInput.value,
-            'id_sede_dp': efectorInput.selectedOptions[0]?.dataset.sede || null,
+            'id_sede_dp': window.dpProfesional?.id_sede_dp || null,
             'Apellido': pacienteApellidoInput.value,
             'Nombre': pacienteNombreInput.value,
             'Edad': pacienteEdadInput.value,
@@ -458,6 +482,13 @@ cargarDatosBtn.addEventListener('click', async (e) => {
 
         if (!allValid) {
             alert('Faltan completar preguntas obligatorias.');
+            return;
+        }
+
+        if (window._cierreBloqueadoAnual) {
+            const b = window._cierreBloqueadoAnual;
+            const fechaLegible = new Date(b.fechaUltimoCierre + 'T00:00:00').toLocaleDateString('es-AR');
+            alert(`⛔ No se puede guardar este cierre.\n\nEste paciente ya tiene un Día Preventivo cerrado el ${fechaLegible}. Todavía faltan ${b.diasRestantes} días para cumplir el año.`);
             return;
         }
 
@@ -490,7 +521,6 @@ cargarDatosBtn.addEventListener('click', async (e) => {
 
     function resetForm() {
         dniInput.value = '';
-        efectorInput.value = '';
         pacienteApellidoInput.value = '';
         pacienteNombreInput.value = '';
         pacienteEdadInput.value = '';
@@ -498,7 +528,11 @@ cargarDatosBtn.addEventListener('click', async (e) => {
         
         currentPatientDNI = null;
         formStepsContainer.innerHTML = '';
-        
+
+        // Limpiar el aviso de cierre reciente, si estaba mostrado
+        window._cierreBloqueadoAnual = null;
+        mostrarCartelBloqueoAnualPed(null);
+
         // Volver a Pantalla Cero
         searchSection.classList.remove('hidden');
         patientDataSection.classList.add('hidden');
