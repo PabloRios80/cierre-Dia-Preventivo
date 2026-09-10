@@ -475,7 +475,7 @@ cargarDatosBtn.addEventListener('click', async (e) => {
             formData[input.name] = input.value.trim();
         });
 
-        if (!formData['Efector'] || !formData['Apellido']) {
+        if (!formData['Apellido']) {
             alert("Error: Faltan datos del paciente. Por favor edite los datos.");
             return;
         }
