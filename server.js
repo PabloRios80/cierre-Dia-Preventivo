@@ -981,6 +981,28 @@ app.post('/obtener-estudios-paciente', async (req, res) => {
 app.get('/api/estudios/:dni/:tipo', async (req, res) => {
     try {
         const { dni, tipo } = req.params;
+
+        // Odontología ya no vive en Google Sheets — el dato real está en
+        // Supabase (odontologia_consultas), con el link al PDF incluido.
+        // Se resuelve acá aparte, sin pasar por la hoja vieja que nunca
+        // se actualiza.
+        if (tipo === 'Odontologia') {
+            const { data: consultas, error: errorOdonto } = await supabase
+                .from('odontologia_consultas')
+                .select('fecha, odontologo, enlace_pdf')
+                .eq('dni', String(dni).trim())
+                .order('fecha', { ascending: false });
+
+            if (errorOdonto) throw errorOdonto;
+
+            const estudiosOdonto = (consultas || []).map((c) => ({
+                Fecha: c.fecha,
+                Odontólogo: c.odontologo || '',
+                'Link a PDF': c.enlace_pdf || '',
+            }));
+
+            return res.json({ success: true, data: estudiosOdonto });
+        }
         
         // Mapeo: Nombre que envía el botón -> Nombre exacto de la pestaña en Google Sheets
         const mapaPestanas = {
