@@ -30,6 +30,7 @@ const express = require('express');
 const path = require('path');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { google } = require('googleapis');
+const { registrarEndpointObtenerEstudios } = require('./endpoint_obtener_estudios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const SPREADSHEET_ID = '15YPfBG9PBfN3nBW5xXJYjIXEgYIS9z71pI0VpeCtAAU';
@@ -1418,6 +1419,12 @@ app.get('/alertas-clinicas/:dni', async (req, res) => {
 });
 // --- NUEVO ARRANQUE DIRECTO (Solo Pediatría) ---
 // Arrancamos el servidor sin esperar a la hoja de cálculo vieja
+// Mismo endpoint /obtener-estudios-paciente que ya usa (y funciona bien
+// en) el formulario de adultos — lee Laboratorio, Odontología y
+// Enfermería directo de Supabase, sin depender de las hojas viejas de
+// Google Sheets que dejaron de actualizarse.
+registrarEndpointObtenerEstudios(app, supabase);
+
 app.listen(PORT, () => {
     console.log(`🚀 Servidor iniciado en puerto ${PORT} (Modo Pediatría - Sin conexión a Hoja Adultos)`);
 });

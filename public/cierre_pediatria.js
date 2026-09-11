@@ -552,25 +552,50 @@ cargarDatosBtn.addEventListener('click', async (e) => {
         estudiosModal.classList.remove('hidden');
 
         try {
-            const response = await fetch(`/api/estudios/${dni}/${tipo}`);
+            const response = await fetch('/obtener-estudios-paciente', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dni }),
+            });
             const result = await response.json();
+            const estudiosDelTipo = (result.estudios || []).filter(
+                (e) => e.TipoEstudio === tipo,
+            );
 
-            if (result.success && result.data.length > 0) {
+            if (result.success !== false && estudiosDelTipo.length > 0) {
                 let html = '';
-                result.data.forEach((study, idx) => {
+                estudiosDelTipo.forEach((study, idx) => {
                     html += `<div class="border-b p-3 mb-2 bg-gray-50 rounded">
-                        <div class="font-bold text-blue-800 mb-1">Resultado #${idx+1} (${study.Fecha || ''})</div>
+                        <div class="font-bold text-blue-800 mb-1">Resultado #${idx + 1} (${study.Fecha || ''})</div>
                         <div class="text-sm grid grid-cols-1 gap-1">`;
-                    
-                    Object.entries(study).forEach(([k, v]) => {
-                        if (!v || k.includes('PDF') || k === 'DNI') return;
-                        html += `<div><span class="font-semibold">${k}:</span> ${v}</div>`;
-                    });
-                    
-                    const link = study['Link a PDF'] || study['LinkPDF'] || study['URL PDF'];
-                    if (link) {
-                        html += `<div class="mt-2"><a href="${link}" target="_blank" class="text-red-600 font-bold text-xs hover:underline"><i class="fas fa-file-pdf"></i> Ver PDF</a></div>`;
+
+                    if (study.Prestador) {
+                        html += `<div><span class="font-semibold">Prestador:</span> ${study.Prestador}</div>`;
                     }
+
+                    // Laboratorio y Enfermería traen sus resultados como un
+                    // objeto aparte (varias determinaciones); el resto trae
+                    // "Resultado"/"Observaciones" sueltos.
+                    const resultados = study.ResultadosLaboratorio || study.ResultadosEnfermeria;
+                    if (resultados) {
+                        Object.entries(resultados).forEach(([k, v]) => {
+                            if (!v || k.includes('PDF')) return;
+                            html += `<div><span class="font-semibold">${k}:</span> ${v}</div>`;
+                        });
+                    }
+                    if (study.Resultado) {
+                        html += `<div><span class="font-semibold">Resultado:</span> ${study.Resultado}</div>`;
+                    }
+                    if (study.Observaciones) {
+                        html += `<div><span class="font-semibold">Observaciones:</span> ${study.Observaciones}</div>`;
+                    }
+
+                    const links = study.LinksPDF?.length ? study.LinksPDF : (study.LinkPDF ? [study.LinkPDF] : []);
+                    links.forEach((link, i) => {
+                        if (!link) return;
+                        html += `<div class="mt-2"><a href="${link}" target="_blank" class="text-red-600 font-bold text-xs hover:underline"><i class="fas fa-file-pdf"></i> Ver PDF${links.length > 1 ? ' ' + (i + 1) : ''}</a></div>`;
+                    });
+
                     html += `</div></div>`;
                 });
                 estudiosModalContent.innerHTML = html;
