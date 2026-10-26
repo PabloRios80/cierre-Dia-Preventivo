@@ -347,6 +347,13 @@ cargarDatosBtn.addEventListener('click', async (e) => {
             }
         }
 
+        // Si el padrón está caído, el server manda edad/sexo de la hoja de vida
+        if (data.padronCaido) {
+            if (data.edad && !pacienteEdadInput.value) pacienteEdadInput.value = data.edad;
+            if ((data.sexo === 'M' || data.sexo === 'F') && !pacienteSexoSelect.value) pacienteSexoSelect.value = data.sexo;
+            alert('Aviso: no se pudo verificar el padrón de IAPOS en este momento. Podés continuar con el cierre; revisá que los datos del paciente sean correctos.');
+        }
+
         // 2. Alertas clínicas
         const alertasRes = await fetch('/alertas-clinicas/' + dni);
         const alertasData = await alertasRes.json();

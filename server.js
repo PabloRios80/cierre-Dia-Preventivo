@@ -1112,6 +1112,7 @@ async function initializeAllSheets() {
     }
 }
 // ── VERIFICAR AFILIADO IAPOS ──
+let padronPausadoHasta = 0; // corte rápido: tras una falla, 5 min sin esperar al padrón
 app.get('/verificar-afiliado/:dni', async (req, res) => {
     const dni = req.params.dni;
     const hoy = new Date().toISOString().split('T')[0];
@@ -1129,7 +1130,9 @@ app.get('/verificar-afiliado/:dni', async (req, res) => {
             </BEWsValidaAfi.Execute>
         </soap:Body>
     </soap:Envelope>`;
+    // Si el padrón falló hace poco, no lo esperamos de nuevo (corte rápido)
     try {
+        if (Date.now() < padronPausadoHasta) throw new Error('Padrón IAPOS en pausa por falla reciente');
         const response = await axios.post(
             'https://aswe.santafe.gov.ar/iapos-sw-srvt/servlet/abewsvalidaafi',
             soapBody,
@@ -1138,7 +1141,7 @@ app.get('/verificar-afiliado/:dni', async (req, res) => {
                     'Content-Type': 'text/xml; charset=utf-8',
                     'SOAPAction': 'IAPOS_WSaction/ABEWSVALIDAAFI.Execute'
                 },
-                timeout: 10000
+                timeout: 4000
             }
         );
         const xml = response.data;
@@ -1157,7 +1160,49 @@ app.get('/verificar-afiliado/:dni', async (req, res) => {
             mensaje: get('Msgdsc')
         });
     } catch(e) {
-        res.status(500).json({ esActivo: false, error: e.message });
+        // El padrón de IAPOS no respondió: NO trabamos al pediatra.
+        // Se continúa con los datos propios (hoja de vida pediátrica / adultos),
+        // igual que el parche de hoja de vida y el cierre de adultos.
+        console.error('Error IAPOS (pediatría):', e.message);
+        if (!String(e.message).includes('en pausa')) padronPausadoHasta = Date.now() + 5 * 60 * 1000;
+        let propio = null;
+        try {
+            const [{ data: menores }, { data: adulto }] = await Promise.all([
+                supabase.from('afiliados_menores')
+                    .select('apellido, nombre, edad, fecha_nacimiento, sexo_biologico')
+                    .eq('dni', dni).order('fecha_carga', { ascending: false }).limit(1),
+                supabase.from('afiliados')
+                    .select('apellido, nombre, edad, fecha_nacimiento, sexo_biologico')
+                    .eq('dni', dni).maybeSingle(),
+            ]);
+            propio = (menores || [])[0] || adulto || null;
+        } catch (e2) {
+            console.error('Error buscando datos propios (pediatría):', e2.message);
+        }
+        let edad = propio?.edad != null && propio.edad !== '' ? String(propio.edad) : null;
+        if (propio?.fecha_nacimiento) {
+            const fn = new Date(String(propio.fecha_nacimiento).slice(0, 10) + 'T00:00:00');
+            if (!isNaN(fn)) {
+                const h = new Date();
+                let ed = h.getFullYear() - fn.getFullYear();
+                if (h.getMonth() < fn.getMonth() || (h.getMonth() === fn.getMonth() && h.getDate() < fn.getDate())) ed--;
+                if (ed >= 0 && ed <= 115) edad = String(ed);
+            }
+        }
+        const sexoBio = String(propio?.sexo_biologico || '').toLowerCase();
+        const nombre = propio
+            ? `${propio.apellido || ''}, ${propio.nombre || ''}`.replace(/^, |, $/g, '').trim() || null
+            : null;
+        res.json({
+            esActivo: true,
+            padronCaido: true,
+            estado: null,
+            nombre,
+            edad,
+            sexo: sexoBio.startsWith('f') ? 'F' : sexoBio.startsWith('m') ? 'M' : null,
+            localidad: null,
+            mensaje: 'No se pudo verificar el padrón de IAPOS en este momento. Se continúa con los datos del sistema.'
+        });
     }
 });
 // ── ALERTAS CLÍNICAS ──
