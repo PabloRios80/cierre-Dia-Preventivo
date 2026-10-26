@@ -212,6 +212,19 @@ async function controlHojaDeVidaPediatrica(dni) {
     const ultimoCierre = ultCierre?.[0]?.fechax ? String(ultCierre[0].fechax).slice(0, 10) : null;
 
     if (!ultimaHv) {
+        // ¿Es un adulto cargado por error en el formulario pediátrico?
+        const { data: adulto } = await supabase.from('afiliados')
+            .select('apellido, nombre, edad')
+            .in('dni', dnis)
+            .limit(1);
+        if (adulto && adulto.length > 0) {
+            const a = adulto[0];
+            const quien = `${a.apellido || ''} ${a.nombre || ''}`.trim();
+            return {
+                bloqueado: true,
+                mensaje: `Este DNI tiene hoja de vida de ADULTOS (${quien}${a.edad ? ', ' + a.edad + ' años' : ''}). Este formulario es solo para menores: hacé el cierre en el formulario de adultos.`,
+            };
+        }
         return {
             bloqueado: true,
             mensaje: 'El paciente no tiene hoja de vida pediátrica. Para cerrar el Día Preventivo, la familia tiene que completarla primero.',
