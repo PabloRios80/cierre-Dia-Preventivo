@@ -358,6 +358,14 @@ cargarDatosBtn.addEventListener('click', async (e) => {
         const alertasRes = await fetch('/alertas-clinicas/' + dni);
         const alertasData = await alertasRes.json();
 
+        // ── SIN HOJA DE VIDA PEDIÁTRICA: no se puede cerrar ──
+        if (alertasData.bloqueoHojaDeVida?.bloqueado) {
+            alert('⛔ No se puede hacer el cierre.\n\n' + alertasData.bloqueoHojaDeVida.mensaje);
+            cargarDatosBtn.disabled = false;
+            cargarDatosBtn.innerHTML = '<i class="fas fa-search mr-2"></i> Cargar Ficha';
+            return;
+        }
+
         // ── AVISO POR CIERRE RECIENTE (menos de 1 año) ──
         window._cierreBloqueadoAnual = alertasData.bloqueoCierreAnual?.bloqueado
             ? alertasData.bloqueoCierreAnual

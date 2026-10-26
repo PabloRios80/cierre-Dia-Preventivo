@@ -179,6 +179,54 @@ app.post('/api/enfermeria/guardar', async (req, res) => {
     }
 });
 
+// ── CONTROL DE HOJA DE VIDA PEDIÁTRICA (vigente desde el 26/10/2026) ──
+// No se puede cerrar un DP pediátrico si el chico no tiene hoja de vida
+// pediátrica (afiliados_menores) del ciclo actual, es decir cargada
+// después de su último cierre de DP. Aplica a todas las sedes y solo
+// a cierres nuevos (no revisa cierres anteriores).
+function variantesDni(dni) {
+    const limpio = String(dni || '').trim();
+    const sinCeros = limpio.replace(/^0+/, '');
+    return [...new Set([limpio, sinCeros, sinCeros.padStart(8, '0')].filter(Boolean))];
+}
+
+async function controlHojaDeVidaPediatrica(dni) {
+    const dnis = variantesDni(dni);
+    const [{ data: hv, error: errHv }, { data: ultCierre, error: errCierre }] = await Promise.all([
+        supabase.from('afiliados_menores')
+            .select('fecha_carga')
+            .in('dni', dnis)
+            .order('fecha_carga', { ascending: false })
+            .limit(1),
+        supabase.from('historial_dia_preventivo')
+            .select('fechax')
+            .in('dni', dnis)
+            .or('estado_registro.is.null,estado_registro.eq.activo')
+            .order('fechax', { ascending: false })
+            .limit(1),
+    ]);
+    if (errHv) throw errHv;
+    if (errCierre) throw errCierre;
+
+    const ultimaHv = hv?.[0]?.fecha_carga ? String(hv[0].fecha_carga).slice(0, 10) : null;
+    const ultimoCierre = ultCierre?.[0]?.fechax ? String(ultCierre[0].fechax).slice(0, 10) : null;
+
+    if (!ultimaHv) {
+        return {
+            bloqueado: true,
+            mensaje: 'El paciente no tiene hoja de vida pediátrica. Para cerrar el Día Preventivo, la familia tiene que completarla primero.',
+        };
+    }
+    if (ultimoCierre && ultimaHv <= ultimoCierre) {
+        const [a, m, d] = ultimoCierre.split('-');
+        return {
+            bloqueado: true,
+            mensaje: `La hoja de vida pediátrica es anterior al último Día Preventivo (${d}/${m}/${a}). Para cerrar este nuevo ciclo, la familia tiene que completarla de nuevo.`,
+        };
+    }
+    return null;
+}
+
 app.post('/api/cierre-pediatria/guardar', async (req, res) => {
     
     const scriptUrl = process.env.URL_SCRIPT_PEDIATRIA;
@@ -212,6 +260,23 @@ app.post('/api/cierre-pediatria/guardar', async (req, res) => {
                         error: `No se puede guardar: este paciente ya tiene un Día Preventivo cerrado el ${fechaUltimoCierreGuardar.toISOString().split('T')[0]}. Faltan ${365 - diasDesdeUltimoCierreGuardar} días para cumplir el año.`,
                     });
                 }
+            }
+        }
+
+        // ── VALIDACIÓN SERVER-SIDE DE HOJA DE VIDA PEDIÁTRICA ──
+        if (dniParaValidar) {
+            let bloqueoHv = null;
+            try {
+                bloqueoHv = await controlHojaDeVidaPediatrica(dniParaValidar);
+            } catch (eHv) {
+                // Si la base no responde no trabamos el cierre por esto
+                console.error('No se pudo verificar la hoja de vida pediátrica:', eHv.message);
+            }
+            if (bloqueoHv) {
+                return res.status(409).json({
+                    success: false,
+                    error: `No se puede guardar: ${bloqueoHv.mensaje}`,
+                });
             }
         }
 
@@ -1304,7 +1369,14 @@ app.get('/alertas-clinicas/:dni', async (req, res) => {
             }
         }
 
-        res.json({ success: true, afiliado: afiliado || menor || null, alertas, bloqueoCierreAnual });
+        let bloqueoHojaDeVida = null;
+        try {
+            bloqueoHojaDeVida = await controlHojaDeVidaPediatrica(dni);
+        } catch (eHv) {
+            console.error('No se pudo verificar la hoja de vida pediátrica:', eHv.message);
+        }
+
+        res.json({ success: true, afiliado: afiliado || menor || null, alertas, bloqueoCierreAnual, bloqueoHojaDeVida });
     } catch(e) {
         res.status(500).json({ success: false, error: e.message });
     }
