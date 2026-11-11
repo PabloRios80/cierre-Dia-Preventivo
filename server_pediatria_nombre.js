@@ -1,0 +1,1445 @@
+require('dotenv').config();
+const v8 = require('v8');
+v8.setFlagsFromString('--max-old-space-size=8192'); // 8GB
+
+// Limitar el tamaño del heap de Node.js
+const heapSizeLimit = 8192 * 1024 * 1024; // 8GB en bytes
+if (process.memoryUsage().heapTotal > heapSizeLimit) {
+    console.warn('⚠️  Memoria cerca del límite, forzando garbage collection');
+    global.gc();
+}
+
+const { createClient } = require('@supabase/supabase-js');
+const axios = require('axios');
+
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+);
+
+// Garbage collection automático cada 30 segundos
+setInterval(() => {
+    if (global.gc) {
+        global.gc();
+        console.log('🧹 Garbage collection ejecutado');
+    }
+}, 30000);
+
+
+const express = require('express');
+const path = require('path');
+const { GoogleSpreadsheet } = require('google-spreadsheet');
+const { google } = require('googleapis');
+const { registrarEndpointObtenerEstudios } = require('./endpoint_obtener_estudios');
+const app = express();
+const PORT = process.env.PORT || 3000;
+const SPREADSHEET_ID = '15YPfBG9PBfN3nBW5xXJYjIXEgYIS9z71pI0VpeCtAAU';
+// >>>>> CAMBIO 1: AGREGAR ID PARA IAPOS <<<<<
+const IAPOS_SPREADSHEET_ID = '1-bhfGB0FqGqWv_fIxPL4eN89o30F-BGZj6loLw3lTzg';
+
+const API_BASE_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+
+
+// --- VARIABLES GLOBALES PARA LOS DOCUMENTOS ---
+let doc; 
+let credentials;     // Documento principal de Pacientes
+let iaposDoc; // Nuevo documento para IAPOS
+let isSheetsReady = false;
+
+
+// Manejo de errores no capturados
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// ====================================================================
+// FUNCIONES DE CONEXIÓN Y UTILIDAD (Credenciales de Service Account)
+// ====================================================================
+
+/**
+ * Obtiene y procesa las credenciales del Service Account desde las variables de entorno 
+ * (GOOGLE_CLIENT_EMAIL y GOOGLE_PRIVATE_KEY).
+ */
+async function getClientCredentials() {
+    // Busca las credenciales en el entorno de Render (o local)
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY ? 
+                       // Reemplaza la secuencia de escape para que funcione con Node.js
+                        process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n') : null;
+
+    if (clientEmail && privateKey) {
+        return {
+            client_email: clientEmail,
+            private_key: privateKey,
+        };
+    } else {
+        // Este error indica que faltan las credenciales para la cuenta de servicio,
+        // lo que impide la conexión a Google Sheets.
+        throw new Error('Credenciales de Google Service Account (email/key) no configuradas en el entorno. Asegúrese de definir GOOGLE_CLIENT_EMAIL y GOOGLE_PRIVATE_KEY.');
+    }
+}
+
+
+// >>>>> CAMBIO 4: ACEPTA UN ARGUMENTO OPCIONAL DE DOCUMENTO <<<<<
+// Por defecto, usa el documento principal (doc)
+async function getUltraOptimizedSheetData(docToUse = doc, sheetIdentifier, filters = {}) {
+    if (!docToUse) throw new Error('Google Sheet no inicializado. El documento no existe.');
+    
+    let sheet;
+    // La lógica de búsqueda de hoja no cambia
+    if (typeof sheetIdentifier === 'string') sheet = docToUse.sheetsByTitle[sheetIdentifier];
+    else if (typeof sheetIdentifier === 'number') sheet = docToUse.sheetsByIndex[sheetIdentifier];
+    
+    if (!sheet) {
+        console.warn(`Hoja "${sheetIdentifier}" no encontrada en el documento`);
+        return [];
+    }
+
+    // ✅ OPTIMIZACIÓN CRÍTICA: Cargar SOLO las columnas necesarias
+    await sheet.loadHeaderRow();
+    const rows = await sheet.getRows();
+    
+    // Filtrar MUY eficientemente
+    return rows
+        .filter(row => {
+            if (!filters.dni) return true;
+            const rowDni = String(row['DNI'] || row['Documento'] || '').trim();
+            return rowDni === String(filters.dni).trim();
+        })
+        .map(row => {
+            const rowData = {};
+            // ✅ Solo incluir campos esenciales
+            const essentialFields = ['DNI', 'Documento', 'Nombre', 'Apellido', 'Fecha', 'Prestador', 'Resultado'];
+            sheet.headerValues.forEach(header => {
+                if (essentialFields.includes(header) || header.includes('Link') || header.includes('PDF')) {
+                    rowData[header] = row[header] || '';
+                }
+            });
+            return rowData;
+        });
+}
+
+
+// --- CONFIGURACIÓN DE MIDDLEWARE GENERAL ---
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+app.use(express.static('public')); // Sirve archivos estáticos desde la carpeta 'public'
+
+// Agrega esta nueva ruta en tu server.js, junto a tus otras rutas.
+// Asegúrate de que esta ruta esté antes de app.use(express.static('public')).
+app.get('/cierre-formulario.html', (req, res) => {
+    // Si el usuario está autenticado, sirve el archivo HTML desde la carpeta privada
+    if (req.isAuthenticated()) {
+        res.sendFile(path.join(__dirname, 'private', 'cierre-formulario.html'));
+    } else {
+        // Si no está autenticado, lo redirige al login de Google, pasando la URL actual
+        res.redirect('/auth/google?returnTo=/cierre-formulario.html');
+    }
+});
+
+app.get('/consultas.html', (req, res) => {
+    // Verifica si el usuario está autenticado
+    if (req.isAuthenticated()) {
+        res.sendFile(path.join(__dirname, 'private', 'consultas.html'));
+    } else {
+        // Si no está autenticado, redirige a la página de inicio de sesión de Google, pasando la URL actual
+        res.redirect('/auth/google?returnTo=/consultas.html');
+    }
+});
+// --- MIDDLEWARE ---
+// Nueva ruta para que el frontend obtenga la URL base de la API
+app.get('/api/config', (req, res) => {
+    res.json({ apiBaseUrl: API_BASE_URL });
+});
+
+app.post('/api/enfermeria/guardar', async (req, res) => {
+    try {
+        // La conexión ya está inicializada al arrancar el servidor
+        // No necesitas la línea "if (!doc) { await initializeGoogleSheet(); }"
+        
+        const sheet = doc.sheetsByTitle["Enfermeria"];
+        if (!sheet) {
+            return res.status(500).json({ message: 'Hoja de cálculo "Enfermeria" no encontrada.' });
+        }
+
+        const newRow = req.body;
+        // >>>>> AGREGAR ESTA LÍNEA <<<<<
+        newRow['Fecha_cierre_Enf'] = new Date().toLocaleDateString('es-AR');
+        await sheet.addRow(newRow);
+
+        res.status(200).json({ message: 'Datos guardados correctamente.' });
+    } catch (error) {
+        console.error('Error al guardar datos de enfermería:', error);
+        res.status(500).json({ message: 'Error interno del servidor.' });
+    }
+});
+
+// ── CONTROL DE HOJA DE VIDA PEDIÁTRICA (vigente desde el 26/10/2026) ──
+// No se puede cerrar un DP pediátrico si el chico no tiene hoja de vida
+// pediátrica (afiliados_menores) del ciclo actual, es decir cargada
+// después de su último cierre de DP. Aplica a todas las sedes y solo
+// a cierres nuevos (no revisa cierres anteriores).
+function variantesDni(dni) {
+    const limpio = String(dni || '').trim();
+    const sinCeros = limpio.replace(/^0+/, '');
+    return [...new Set([limpio, sinCeros, sinCeros.padStart(8, '0')].filter(Boolean))];
+}
+
+async function controlHojaDeVidaPediatrica(dni) {
+    const dnis = variantesDni(dni);
+    const [{ data: hv, error: errHv }, { data: ultCierre, error: errCierre }] = await Promise.all([
+        supabase.from('afiliados_menores')
+            .select('fecha_carga')
+            .in('dni', dnis)
+            .order('fecha_carga', { ascending: false })
+            .limit(1),
+        supabase.from('historial_dia_preventivo')
+            .select('fechax')
+            .in('dni', dnis)
+            .or('estado_registro.is.null,estado_registro.eq.activo')
+            .order('fechax', { ascending: false })
+            .limit(1),
+    ]);
+    if (errHv) throw errHv;
+    if (errCierre) throw errCierre;
+
+    const ultimaHv = hv?.[0]?.fecha_carga ? String(hv[0].fecha_carga).slice(0, 10) : null;
+    const ultimoCierre = ultCierre?.[0]?.fechax ? String(ultCierre[0].fechax).slice(0, 10) : null;
+
+    if (!ultimaHv) {
+        // ¿Es un adulto cargado por error en el formulario pediátrico?
+        const { data: adulto } = await supabase.from('afiliados')
+            .select('apellido, nombre, edad')
+            .in('dni', dnis)
+            .limit(1);
+        if (adulto && adulto.length > 0) {
+            const a = adulto[0];
+            const quien = `${a.apellido || ''} ${a.nombre || ''}`.trim();
+            return {
+                bloqueado: true,
+                mensaje: `Este DNI tiene hoja de vida de ADULTOS (${quien}${a.edad ? ', ' + a.edad + ' años' : ''}). Este formulario es solo para menores: hacé el cierre en el formulario de adultos.`,
+            };
+        }
+        return {
+            bloqueado: true,
+            mensaje: 'El paciente no tiene hoja de vida pediátrica. Para cerrar el Día Preventivo, la familia tiene que completarla primero.',
+        };
+    }
+    if (ultimoCierre && ultimaHv <= ultimoCierre) {
+        const [a, m, d] = ultimoCierre.split('-');
+        return {
+            bloqueado: true,
+            mensaje: `La hoja de vida pediátrica es anterior al último Día Preventivo (${d}/${m}/${a}). Para cerrar este nuevo ciclo, la familia tiene que completarla de nuevo.`,
+        };
+    }
+    return null;
+}
+
+app.post('/api/cierre-pediatria/guardar', async (req, res) => {
+    
+    const scriptUrl = process.env.URL_SCRIPT_PEDIATRIA;
+
+    try {
+        const formData = req.body;
+        const dniParaValidar = String(formData['DNI'] || '').trim();
+
+        // ── VALIDACIÓN SERVER-SIDE DEL BLOQUEO ANUAL ──
+        // No confiar solo en que el frontend respete el aviso — se
+        // verifica de nuevo acá, igual que en el cierre de adultos.
+        if (dniParaValidar) {
+            const { data: modulosPreviosGuardar } = await supabase
+                .from('practicas_autorizadas')
+                .select('fecha_carga')
+                .eq('dni', dniParaValidar)
+                .eq('descripcion_practica', 'Módulo Día Preventivo')
+                .eq('estado', 'REALIZADA')
+                .not('fecha_carga', 'is', null)
+                .order('fecha_carga', { ascending: false })
+                .limit(1);
+
+            if (modulosPreviosGuardar && modulosPreviosGuardar.length > 0) {
+                const fechaUltimoCierreGuardar = new Date(modulosPreviosGuardar[0].fecha_carga);
+                const diasDesdeUltimoCierreGuardar = Math.floor(
+                    (Date.now() - fechaUltimoCierreGuardar.getTime()) / (1000 * 60 * 60 * 24)
+                );
+                if (diasDesdeUltimoCierreGuardar < 365) {
+                    return res.status(409).json({
+                        success: false,
+                        error: `No se puede guardar: este paciente ya tiene un Día Preventivo cerrado el ${fechaUltimoCierreGuardar.toISOString().split('T')[0]}. Faltan ${365 - diasDesdeUltimoCierreGuardar} días para cumplir el año.`,
+                    });
+                }
+            }
+        }
+
+        // ── VALIDACIÓN SERVER-SIDE DE HOJA DE VIDA PEDIÁTRICA ──
+        if (dniParaValidar) {
+            let bloqueoHv = null;
+            try {
+                bloqueoHv = await controlHojaDeVidaPediatrica(dniParaValidar);
+            } catch (eHv) {
+                // Si la base no responde no trabamos el cierre por esto
+                console.error('No se pudo verificar la hoja de vida pediátrica:', eHv.message);
+            }
+            if (bloqueoHv) {
+                return res.status(409).json({
+                    success: false,
+                    error: `No se puede guardar: ${bloqueoHv.mensaje}`,
+                });
+            }
+        }
+
+        const nombreProfesional = formData['Profesional'] || 'Desconocido';
+
+        const nombreCompleto = (formData['Apellido_Nombre'] || '').trim();
+        const primerEspacio = nombreCompleto.indexOf(' ');
+        let apellido = nombreCompleto;
+        let nombre = '';
+        
+        if (formData['Apellido'] && formData['Nombre']) {
+            apellido = formData['Apellido'];
+            nombre = formData['Nombre'];
+        } else if (primerEspacio > 0) {
+            apellido = nombreCompleto.substring(0, primerEspacio);
+            nombre = nombreCompleto.substring(primerEspacio + 1);
+        }
+
+        const payload = {
+            ...formData,
+            'Profesional': nombreProfesional,
+            'Apellido': apellido,
+            'Nombre': nombre
+        };
+
+        // 1. Guardar en Google Sheets (mantenemos flujo actual)
+        if (scriptUrl) {
+            try {
+                const response = await fetch(scriptUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (!result.success) console.error("Error Google Script:", result.error);
+            } catch (e) {
+                console.error("Error enviando a Google Sheets:", e.message);
+            }
+        }
+
+        // 2. Guardar en Supabase
+        const dni = String(formData['DNI'] || '').trim();
+        const fechaCierre = formData['FECHA'] || new Date().toISOString().split('T')[0];
+
+        // La sede correcta es la de la ADMISIÓN REAL del paciente en
+        // tablero_dia (si existe una para hoy), no la del perfil/sesión
+        // del profesional que carga el cierre — mismo criterio que en
+        // el cierre de adultos. Si no tiene admisión de hoy (sedes que
+        // todavía no usan Tablero del Día), se cae al valor del form.
+        let idSedeDp = formData['id_sede_dp'] ? parseInt(formData['id_sede_dp']) : null;
+        try {
+            const hoyLocal = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'America/Argentina/Buenos_Aires',
+            }).format(new Date());
+            const { data: admisionHoy } = await supabase
+                .from('tablero_dia')
+                .select('id_sede_dp')
+                .eq('dni', dni)
+                .eq('fecha', hoyLocal)
+                .not('id_sede_dp', 'is', null)
+                .maybeSingle();
+            if (admisionHoy?.id_sede_dp) {
+                idSedeDp = admisionHoy.id_sede_dp;
+            }
+        } catch (eSedeReal) {
+            console.warn('No se pudo verificar la sede real por tablero_dia, se usa la del profesional:', eSedeReal.message);
+        }
+
+        // El efector se deriva de la sede real, ya no depende de que el
+        // profesional lo elija a mano en el formulario (fuente de errores,
+        // como el caso de un médico con la sede vieja en su sesión).
+        const SEDES_EFECTOR_PED = {
+            1: 'IAPOS ESP PREST',
+            2: 'ATEM',
+            3: 'Hospital Italiano Rosario',
+            4: 'Delta',
+            5: 'Sunchales',
+            6: 'Coronda',
+            7: 'Reconquista',
+        };
+        const efectorReal = SEDES_EFECTOR_PED[idSedeDp] || 'IAPOS ESP PREST';
+
+        const supabaseData = {
+            dni,
+            apellido_y_nombre: `${apellido} ${nombre}`.trim(),
+            fechax: fechaCierre,
+            edad: formData['Edad'] || null,
+            sexo: formData['Sexo'] || null,
+            efector: efectorReal,
+            id_sede_dp: idSedeDp,
+            tipo: 'Pediatrico',
+            profesional: nombreProfesional,
+            marca_temporal: new Date().toISOString(),
+            presion_arterial: formData['Presión Arterial'] || null,
+            obs_presion_arterial: formData['Observaciones - Presión Arterial'] || null,
+            imc: formData['IMC'] || null,
+            obs_imc: formData['Observaciones - IMC'] || null,
+            alimentacion_saludable: formData['Alimentación saludable'] || null,
+            obs_alimentacion: formData['Observaciones - Alimentación saludable'] || null,
+            actividad_fisica: formData['Actividad física'] || null,
+            obs_actividad_fisica: formData['Observaciones - Actividad física'] || null,
+            violencia: formData['Violencia'] || null,
+            obs_violencia: formData['Observaciones - Violencia'] || null,
+            ef: formData['Examen Fisico'] || null,
+            obs_ef: formData['Observaciones - Examen Fisico'] || null,
+            talla: formData['Talla'] || null,
+            obs_talla: formData['Observaciones - Talla'] || null,
+            salud_ocular: formData['Salud Ocular'] || null,
+            obs_salud_ocular: formData['Observaciones - Salud Ocular'] || null,
+            audicion: formData['Audición'] || null,
+            obs_audicion: formData['Observaciones - Audición'] || null,
+            salud_cardiovascular: formData['Salud Cardiovascular'] || null,
+            obs_salud_cardiovascular: formData['Observaciones - Salud Cardiovascular'] || null,
+            educacion_sexual: formData['Educación sexual'] || null,
+            obs_educacion_sexual: formData['Observaciones - Educación sexual'] || null,
+            salud_mental_integral: formData['Salud Mental Integral'] || null,
+            obs_salud_mental: formData['Observaciones - Salud Mental'] || null,
+            consumo_sustancias: formData['Consumo de sustancias problemáticas'] || null,
+            obs_consumo_sustancias: formData['Observaciones - Consumo de sustancias'] || null,
+            pesquisa_dislipemia: formData['Pesquisa de Dislipemia'] || null,
+            obs_pesquisa_dislipemia: formData['Observaciones - Dislipemia'] || null,
+            sindrome_metabolico: formData['Síndrome Metabólico'] || null,
+            obs_sindrome_metabolico: formData['Observaciones - Síndrome Metabólico'] || null,
+            escoliosis: formData['Escoliosis'] || null,
+            obs_escoliosis: formData['Observaciones - Escoliosis'] || null,
+            cancer_cervico_uterino: formData['Cáncer cérvico uterino'] || null,
+            obs_cancer_cervico_uterino: formData['Observaciones - Cáncer cérvico uterino'] || null,
+            cancer_piel: formData['Cáncer de piel'] || null,
+            obs_cancer_piel: formData['Observaciones - Cáncer de piel'] || null,
+            desarrollo_escolar: formData['Desarrollo escolar y aprendizaje'] || null,
+            obs_desarrollo_escolar: formData['Observaciones - Desarrollo escolar'] || null,
+            uso_pantallas: formData['Uso de pantallas'] || null,
+            horas_pantallas: formData['Cantidad de horas diarias'] || null,
+            obs_uso_pantallas: formData['Observaciones - Uso de pantallas'] || null,
+            control_vacunas: formData['Control de vacunas de calendario'] || null,
+            obs_control_vacunas: formData['Observaciones - Vacunas'] || null,
+            control_odontologico_ninos: formData['Control Odontológico - Niños'] || null,
+            obs_control_odontologico_ninos: formData['Observaciones - Control Odontológico'] || null
+        };
+
+        const { error: supabaseError } = await supabase
+            .from('historial_dia_preventivo')
+            .insert(supabaseData);
+
+        if (supabaseError) {
+            console.error('Error Supabase pediatría:', supabaseError);
+        } else {
+            console.log('✅ Cierre pediatría guardado en Supabase para DNI:', dni);
+
+            // Registrar la consulta médica pediátrica como acción facturable,
+            // igual que en el cierre de adultos.
+            try {
+                const hoy = new Date().toISOString().split('T')[0];
+                // Reutiliza el idSedeDp ya calculado arriba (con prioridad a
+                // la admisión real en tablero_dia), no vuelve a leer del form.
+
+                await supabase.from('practicas_autorizadas').insert({
+                    dni,
+                    nombre_completo: `${apellido} ${nombre}`.trim(),
+                    descripcion_practica: 'Consulta médica (Día Preventivo)',
+                    codigo_prestacion: 'B040101',
+                    estado: 'REALIZADA',
+                    fecha_autorizacion: hoy,
+                    fecha_carga: hoy,
+                    nombre_prestador: nombreProfesional,
+                    id_sede_dp: idSedeDp,
+                });
+                console.log('✅ Consulta médica pediátrica registrada como REALIZADA para DNI:', dni);
+
+                if (idSedeDp) {
+                    const { data: prestadoresCoordSede } = await supabase
+                        .from('prestador_sedes')
+                        .select('id_prestador')
+                        .eq('id_sede_dp', idSedeDp);
+
+                    let prestadorCoord = null;
+                    if (prestadoresCoordSede && prestadoresCoordSede.length > 0) {
+                        const idsPrestadores = prestadoresCoordSede.map((r) => r.id_prestador);
+                        const { data: institucionCoord } = await supabase
+                            .from('prestadores_institucionales')
+                            .select('id, nombre_institucion')
+                            .in('id', idsPrestadores)
+                            .eq('especialidad', 'coordinacion_dp')
+                            .maybeSingle();
+                        if (institucionCoord) {
+                            prestadorCoord = institucionCoord;
+                        }
+                    }
+
+                    if (prestadorCoord) {
+                        await supabase.from('practicas_autorizadas').insert({
+                            dni,
+                            nombre_completo: `${apellido} ${nombre}`.trim(),
+                            descripcion_practica: 'Módulo Día Preventivo',
+                            codigo_prestacion: '339159',
+                            estado: 'REALIZADA',
+                            fecha_autorizacion: hoy,
+                            fecha_carga: hoy,
+                            id_prestador: prestadorCoord.id,
+                            nombre_prestador: prestadorCoord.nombre_institucion,
+                            id_sede_dp: idSedeDp,
+                        });
+                        console.log('✅ Módulo Día Preventivo (339159) pediátrico registrado para DNI:', dni);
+                    } else {
+                        console.warn(`No hay prestador de Coordinación DP configurado para sede ${idSedeDp}`);
+                    }
+                } else {
+                    console.warn('No se recibió id_sede_dp, no se pudo asignar Módulo DP a ningún prestador.');
+                }
+            } catch (medErr) {
+                console.error('Error al registrar consulta médica/módulo pediátrico en practicas_autorizadas:', medErr.message);
+            }
+        }
+
+        res.json({ success: true, message: "Ficha guardada exitosamente." });
+
+    } catch (error) {
+        console.error("Error al guardar cierre pediatría:", error);
+        res.status(500).json({ success: false, error: "Error interno al guardar.", details: error.message });
+    }
+});
+// >>>>> CAMBIO 3: NUEVA FUNCIÓN DE INICIALIZACIÓN PARA IAPOS <<<<<
+async function initializeIaposSheet() {
+    try {
+        iaposDoc = new GoogleSpreadsheet(IAPOS_SPREADSHEET_ID, await getClientCredentials());
+        await iaposDoc.loadInfo(); // Carga la metadata del archivo de IAPOS
+        console.log(`Documento IAPOS cargado: "${iaposDoc.title}"`);
+    } catch (error) {
+        console.error('Error al inicializar el documento IAPOS:', error.message);
+        // Si falla, el servidor sigue vivo, pero las búsquedas de IAPOS fallarán.
+    }
+}
+
+
+// Inicialización de ambos Sheets (Ejecutar en app.listen)
+async function initializeAllSheets() {
+    await initializeGoogleSheet();
+    await initializeIaposSheet(); // <-- Inicializa el documento IAPOS
+    isSheetsReady = true;
+}
+
+// Función para obtener todos los datos de una hoja específica (por nombre o índice)
+// Usaremos esta función para ambas: la hoja principal y las hojas de estudios.
+async function getDataFromSpecificSheet(sheetIdentifier) { // sheetIdentifier puede ser el nombre o el índice
+    if (!doc) {
+        throw new Error('Google Sheet document not initialized. Call initializeGoogleSheet() first.');
+    }
+    try {
+        let sheet;
+        if (typeof sheetIdentifier === 'string') {
+            sheet = doc.sheetsByTitle[sheetIdentifier]; // Busca por nombre
+        } else if (typeof sheetIdentifier === 'number') {
+            sheet = doc.sheetsByIndex[sheetIdentifier]; // Busca por índice
+        }
+
+        if (!sheet) {
+            console.warn(`Hoja "${sheetIdentifier}" no encontrada en el documento.`);
+            return [];
+        }
+
+        await sheet.loadHeaderRow(); // Carga la fila de encabezados de esta hoja
+        const rows = await sheet.getRows(); // Obtiene todas las filas de datos
+
+        const allData = rows.map(row => {
+            const rowData = {};
+            sheet.headerValues.forEach(header => {
+                // Maneja valores nulos o indefinidos, devolviendo una cadena vacía
+                rowData[header] = row[header] || '';
+            });
+            return rowData;
+        });
+        return allData;
+    } catch (error) {
+        console.error(`Error al leer la hoja de cálculo "${sheetIdentifier}":`, error);
+        throw error; // Re-lanza el error para que sea manejado por la ruta que la llamó
+    }
+}
+
+async function uploadFileToDrive(fileBuffer, fileName, mimeType) {
+    const FOLDER_ID = '1JhWxc3eFhZaT3edEjiUM-vHY4Y9MgVy-';
+
+    const auth = new google.auth.GoogleAuth({
+        credentials: {
+            client_email: credentials.client_email,
+            private_key: credentials.private_key.replace(/\\n/g, '\n'),
+        },
+        // The scopes must be changed to allow writing to shared folders.
+        scopes: ['https://www.googleapis.com/auth/drive'], 
+    });
+
+    const drive = google.drive({ version: 'v3', auth });
+    const fileStream = streamifier.createReadStream(fileBuffer);
+    
+    const fileMetadata = {
+        name: fileName,
+        mimeType: mimeType,
+        parents: [FOLDER_ID],
+    };
+
+    const media = {
+        mimeType: mimeType,
+        body: fileStream,
+    };
+
+    const response = await drive.files.create({
+        requestBody: fileMetadata,
+        media: media,
+        fields: 'id, webViewLink',
+    });
+
+    return response.data.webViewLink;
+}
+
+// ====================================================================
+// RUTAS EXISTENTES - ADAPTADAS PARA USAR EL OBJETO 'doc' GLOBAL
+// Y la nueva función 'getDataFromSpecificSheet'
+// ====================================================================
+
+// Ruta para obtener todos los campos (para el selector), excluyendo los de observaciones
+app.get('/obtener-campos', async (req, res) => {
+    try {
+        // Asumimos que los campos a filtrar están en la primera hoja (índice 0)
+        const data = await getDataFromSpecificSheet(0);
+        if (data && data.length > 0) {
+            const headers = Object.keys(data[0]).filter(header => !header.startsWith('Observaciones'));
+            res.json(headers);
+        } else {
+            res.status(404).send('No se encontraron datos en la hoja principal.');
+        }
+    } catch (error) {
+        console.error('Error al obtener los campos:', error);
+        res.status(500).send('Error al obtener los campos.');
+    }
+});
+
+// Nueva ruta para obtener todas las opciones únicas de un campo específico
+app.get('/obtener-opciones-campo/:campo', async (req, res) => {
+    const campo = req.params.campo;
+    try {
+        // Asumimos que las opciones están en la primera hoja (índice 0)
+        const allData = await getDataFromSpecificSheet(0);
+        // Obtiene valores únicos y elimina los vacíos o nulos (filter(Boolean))
+        const opcionesUnicas = [...new Set(allData.map(item => item[campo]).filter(Boolean))];
+        res.json(opcionesUnicas);
+    } catch (error) {
+        console.error(`Error al obtener las opciones para el campo ${campo}:`, error);
+        res.status(500).json({ error: `Error al obtener las opciones para el campo ${campo}`, details: error.message });
+    }
+});
+
+// --- RUTA PRINCIPAL DE BÚSQUEDA - /buscar ---
+app.post('/buscar', async (req, res) => {
+    try {
+        const allData = await getDataFromSpecificSheet(0); // Suponiendo que los datos del Día Preventivo están en la hoja 0
+        const dniABuscar = String(req.body.dni).trim();
+
+        const NOMBRE_COLUMNA_FECHA = 'Fecha_cierre_DP'; // Asegúrate de que este es el nombre exacto de la columna de fecha
+
+        const parseDateDDMMYYYY = (dateString) => {
+            if (!dateString) return new Date(NaN);
+            const parts = dateString.split('/');
+            if (parts.length === 3) {
+                const day = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10) - 1; 
+                const year = parseInt(parts[2], 10);
+                if (isNaN(day) || isNaN(month) || isNaN(year)) return new Date(NaN);
+                return new Date(year, month, day);
+            }
+            return new Date(NaN);
+        };
+
+        // 1. Filtrar TODOS los registros para el DNI
+        const resultadosParaDNI = allData.filter(patient =>
+            String(patient['DNI'] || patient['Documento'] || '').trim() === dniABuscar
+        );
+
+        if (resultadosParaDNI.length === 0) {
+            console.log(`SERVER: DNI ${dniABuscar} no encontrado.`);
+            // Cuando no se encuentra, devolvemos un objeto con 'error'
+            return res.json({ error: 'DNI no encontrado.' }); 
+        }
+
+        // 2. Ordenar los resultados por fecha (más reciente primero)
+        resultadosParaDNI.sort((a, b) => {
+            const dateA = parseDateDDMMYYYY(a[NOMBRE_COLUMNA_FECHA]);
+            const dateB = parseDateDDMMYYYY(b[NOMBRE_COLUMNA_FECHA]);
+
+            if (isNaN(dateA.getTime()) && isNaN(dateB.getTime())) return 0;
+            if (isNaN(dateA.getTime())) return 1;
+            if (isNaN(dateB.getTime())) return -1;
+
+            return dateB.getTime() - dateA.getTime(); 
+        });
+
+        // ====================================================================
+// RUTA NUEVA PARA LA HOJA IAPOS
+// ====================================================================
+
+// Ruta para buscar registros en la hoja específica "hoja_iapos"
+app.post('/api/iapos/buscar', async (req, res) => {
+    try {
+        const dniABuscar = String(req.body.dni).trim();
+        const NOMBRE_HOJA = "hoja_iapos";
+        
+        // Usamos la función optimizada, pasando el nombre de la hoja y el filtro DNI
+        const resultadosIapos = await getUltraOptimizedSheetData(NOMBRE_HOJA, { dni: dniABuscar });
+
+        if (resultadosIapos.length === 0) {
+            console.log(`SERVER (${NOMBRE_HOJA}): DNI ${dniABuscar} no encontrado.`);
+            return res.json({ error: `DNI no encontrado en la hoja ${NOMBRE_HOJA}.` });
+        }
+
+        console.log(`SERVER (${NOMBRE_HOJA}): DNI ${dniABuscar} encontrado. Enviando ${resultadosIapos.length} registros.`);
+
+        // Por defecto, devolvemos el array completo de resultados encontrados
+        res.json({
+            registrosIapos: resultadosIapos,
+            // Si necesitas el primer registro como principal:
+            registroPrincipal: resultadosIapos[0] 
+        });
+
+    } catch (error) {
+        console.error(`Error en servidor al buscar paciente IAPOS en ${NOMBRE_HOJA} por DNI:`, error);
+        res.status(500).json({
+            error: `Error interno del servidor al buscar en ${NOMBRE_HOJA}`,
+            details: error.message
+        });
+    }
+});
+
+        // El primer elemento es el más reciente (el que se mostrará como principal)
+        const pacientePrincipal = resultadosParaDNI[0];
+        
+        // Los estudios previos son todos los demás, si existen.
+        // Mapeamos solo la fecha para el cartel informativo.
+        const estudiosPrevios = resultadosParaDNI.slice(1).map(estudio => ({
+            fecha: estudio[NOMBRE_COLUMNA_FECHA] || 'Fecha desconocida'
+        }));
+
+        console.log(`SERVER: DNI ${dniABuscar} encontrado. Enviando el más reciente y ${estudiosPrevios.length} estudios previos.`);
+
+        // 3. ¡LA CLAVE! Enviamos un objeto con dos propiedades claras.
+        // Esto evita que tu frontend se confunda sobre dónde están los datos principales.
+        res.json({
+            pacientePrincipal: pacientePrincipal,
+            estudiosPrevios: estudiosPrevios
+        });
+
+    } catch (error) {
+        console.error('Error en servidor al buscar paciente por DNI:', error);
+        res.status(500).json({
+            error: 'Error interno del servidor',
+            details: error.message
+        });
+    }
+});
+
+// Ruta para consultas grupales (usada en estadisticas.html)
+app.post('/consultar-grupo', async (req, res) => {
+    try {
+        const { conditions, combinator = 'AND', fieldsToRetrieve = [] } = req.body;
+
+        // Obtener todos los datos de la hoja principal (índice 0)
+        const allData = await getDataFromSpecificSheet(0);
+        const totalRegistros = allData.length;
+        let filteredResults;
+
+        if (combinator === 'AND') {
+            filteredResults = allData.filter(patient => {
+                return conditions.every(condition => {
+                    const patientValue = patient[condition.field];
+                    const conditionValue = condition.value;
+                    const operator = condition.operator;
+
+                    switch (operator) {
+                        case 'equals':
+                            return String(patientValue || '').trim() === String(conditionValue || '').trim();
+                        case 'notEquals':
+                            return String(patientValue || '').trim() !== String(conditionValue || '').trim();
+                        case 'greaterThan':
+                            return Number(patientValue) > Number(conditionValue);
+                        case 'greaterThanOrEqual':
+                            return Number(patientValue) >= Number(conditionValue);
+                        case 'lessThan':
+                            return Number(patientValue) < Number(conditionValue);
+                        case 'lessThanOrEqual':
+                            return Number(patientValue) <= Number(conditionValue);
+                        case 'includes':
+                            return String(patientValue || '').toLowerCase().includes(String(conditionValue || '').toLowerCase());
+                        case 'in':
+                            if (Array.isArray(conditionValue)) {
+                                return conditionValue.some(val => String(patientValue || '').trim() === String(val || '').trim());
+                            }
+                            return false;
+                        default:
+                            return false;
+                    }
+                });
+            });
+        } else if (combinator === 'OR') {
+            filteredResults = allData.filter(patient => {
+                return conditions.some(condition => {
+                    const patientValue = patient[condition.field];
+                    const conditionValue = condition.value;
+                    const operator = condition.operator;
+
+                    switch (operator) {
+                        case 'equals':
+                            return String(patientValue || '').trim() === String(conditionValue || '').trim();
+                        case 'notEquals':
+                            return String(patientValue || '').trim() !== String(conditionValue || '').trim();
+                        case 'greaterThan':
+                            return Number(patientValue) > Number(conditionValue);
+                        case 'greaterThanOrEqual':
+                            return Number(patientValue) >= Number(conditionValue);
+                        case 'lessThan':
+                            return Number(patientValue) < Number(conditionValue);
+                        case 'lessThanOrEqual':
+                            return Number(patientValue) <= Number(conditionValue);
+                        case 'includes':
+                            return String(patientValue || '').toLowerCase().includes(String(conditionValue || '').toLowerCase());
+                        case 'in':
+                            if (Array.isArray(conditionValue)) {
+                                return conditionValue.some(val => String(patientValue || '').trim() === String(val || '').trim());
+                            }
+                            return false;
+                        default:
+                            return false;
+                    }
+                });
+            });
+        } else {
+            filteredResults = []; // Si no se especifica el combinador
+        }
+
+        const conteoCruce = filteredResults.length;
+        const criteriosCruce = {};
+        conditions.forEach(condition => {
+            criteriosCruce[condition.field] = condition.value;
+        });
+
+        res.json({
+            total_registros: totalRegistros,
+            conteo_cruce: conteoCruce,
+            criterios_cruce: criteriosCruce,
+            data: filteredResults // Incluimos el array completo de filteredResults para la exportación
+        });
+
+    } catch (error) {
+        console.error('Error al realizar la consulta grupal:', error);
+        res.status(500).json({ error: 'Error al realizar la consulta' });
+    }
+});
+
+app.get('/obtener-resultados-variable/:variable', async (req, res) => {
+    const variable = req.params.variable;
+    try {
+        // Obtener datos de la hoja principal (índice 0)
+        const data = await getDataFromSpecificSheet(0);
+        if (data && data.length > 0 && data[0].hasOwnProperty(variable)) {
+            const resultadosUnicos = [...new Set(data.map(row => row[variable]).filter(value => value !== ''))];
+            res.json(resultadosUnicos);
+        } else {
+            res.status(404).send(`Variable "${variable}" no encontrada o sin datos.`);
+        }
+    } catch (error) {
+        console.error(`Error al obtener los resultados para la variable "${variable}":`, error);
+        res.status(500).send(`Error al obtener los resultados para la variable "${variable}".`);
+    }
+});
+
+// Agrega esta nueva ruta GET en tu server.js, junto a tus otras rutas
+app.get('/api/user', (req, res) => {
+    // Si el usuario está autenticado, req.isAuthenticated() será verdadero
+    if (req.isAuthenticated()) {
+        res.json({
+            isLoggedIn: true,
+            user: {
+                name: req.user.displayName,
+                email: req.user.emails[0].value
+            }
+        });
+    } else {
+        res.json({
+            isLoggedIn: false
+        });
+    }
+});
+// Ruta para servir el HTML de Cierre Pediatría
+app.get('/cierre-pediatria', (req, res) => {
+    // Verificar si el usuario ya inició sesión
+    if (req.isAuthenticated()) {
+        // Si el archivo está en la misma carpeta que server.js:
+        res.sendFile(path.join(__dirname, 'cierre_pediatria.html'));
+        
+        // OJO: Si moviste el archivo a la carpeta 'public', usa esta línea en su lugar:
+        // res.sendFile(path.join(__dirname, 'public', 'cierre_pediatria.html'));
+    } else {
+        // Si NO está logueado, redirigir al login de Google
+        // y configurar para que vuelva a esta página al terminar
+        res.redirect('/auth/google?returnTo=/cierre-pediatria');
+    }
+});
+
+// ====================================================================
+// NUEVA RUTA - OBTENER ESTUDIOS COMPLEMENTARIOS POR DNI
+// ====================================================================
+// El endpoint viejo /obtener-estudios-paciente (basado en Google
+// Sheets) se eliminó de acá — ahora lo registra el módulo compartido
+// (endpoint_obtener_estudios.js), que lee directo de Supabase.
+
+// ====================================================================
+// NUEVA RUTA: OBTENER ESTUDIOS ESPECÍFICOS (SOLUCIÓN ERROR 404 PEDIATRÍA)
+// ====================================================================
+app.get('/api/estudios/:dni/:tipo', async (req, res) => {
+    try {
+        const { dni, tipo } = req.params;
+
+        // Odontología ya no vive en Google Sheets — el dato real está en
+        // Supabase (odontologia_consultas), con el link al PDF incluido.
+        // Se resuelve acá aparte, sin pasar por la hoja vieja que nunca
+        // se actualiza.
+        if (tipo === 'Odontologia') {
+            const { data: consultas, error: errorOdonto } = await supabase
+                .from('odontologia_consultas')
+                .select('fecha, odontologo, enlace_pdf')
+                .eq('dni', String(dni).trim())
+                .order('fecha', { ascending: false });
+
+            if (errorOdonto) throw errorOdonto;
+
+            const estudiosOdonto = (consultas || []).map((c) => ({
+                Fecha: c.fecha,
+                Odontólogo: c.odontologo || '',
+                'Link a PDF': c.enlace_pdf || '',
+            }));
+
+            return res.json({ success: true, data: estudiosOdonto });
+        }
+        
+        // Mapeo: Nombre que envía el botón -> Nombre exacto de la pestaña en Google Sheets
+        const mapaPestanas = {
+            'Enfermeria': 'Enfermeria',
+            'Laboratorio': 'Laboratorio',
+            'Odontologia': 'Odontologia',
+            'Biopsia': 'Biopsia',
+            'VCC': 'VCC',
+            'Mamografia': 'Mamografia',
+            'Eco mamaria': 'Eco mamaria',
+            'Espirometria': 'Espirometria',
+            'Ecografia': 'Ecografia',
+            'Densitometria': 'Densitometria'
+        };
+
+        const nombreRealPestana = mapaPestanas[tipo];
+
+        if (!nombreRealPestana) {
+            return res.status(400).json({ success: false, error: `Tipo de estudio '${tipo}' no configurado.` });
+        }
+
+        // Reutilizamos tu función existente para leer la hoja
+        const datosHoja = await getDataFromSpecificSheet(nombreRealPestana);
+
+        // Filtramos por DNI
+        const estudiosEncontrados = datosHoja.filter(fila => 
+            String(fila['DNI'] || '').trim() === String(dni).trim()
+        );
+
+        res.json({ success: true, data: estudiosEncontrados });
+
+    } catch (error) {
+        console.error(`Error al buscar estudios de ${req.params.tipo}:`, error);
+        res.status(500).json({ success: false, error: "Error interno al buscar estudios." });
+    }
+});
+
+app.post('/api/seguimiento/guardar', async (req, res) => {
+    const { fecha, profesional, paciente, evaluaciones, observacionProfesional, pdfLinks } = req.body;
+    console.log(`SERVER: Recibido informe de seguimiento para DNI: ${paciente.dni} en fecha: ${fecha}`);
+
+    if (!doc) {
+        console.error('SERVER ERROR: Google Sheet document not initialized.');
+        return res.status(500).json({ error: 'Error interno del servidor: Base de datos no disponible.' });
+    }
+
+    try {
+        await doc.loadInfo();
+        let sheetSeguimiento = doc.sheetsByTitle['Seguimiento'];
+
+        if (!sheetSeguimiento) {
+            console.log('SERVER: Creando nueva hoja "Seguimiento" en Google Sheet con encabezados predefinidos.');
+            sheetSeguimiento = await doc.addSheet({
+                title: 'Seguimiento',
+                headerValues: [
+                    'Fecha_Seguimiento', 'DNI_Paciente', 'Nombre_Paciente',
+                    'Profesional_Apellido_Nombre', 'Profesional_Matricula',
+                    'Riesgo_Cardiovascular_Calificacion', 'Riesgo_Cardiovascular_Observaciones',
+                    'Diabetes_Calificacion', 'Diabetes_Observaciones',
+                    'Dislipemia_Calificacion', 'Dislipemia_Observaciones',
+                    'Tabaquismo_Calificacion', 'Tabaquismo_Observaciones',
+                    'Actividad_fisica_Calificacion', 'Actividad_fisica_Observaciones',
+                    'Observacion_Profesional', 'Links_PDFs'
+                ]
+            });
+        }
+
+        // *************************************************************************
+        // ** ESTE CÓDIGO DEBE ESTAR DENTRO DE LA RUTA /api/seguimiento/guardar **
+        // *************************************************************************
+        const newRow = {
+            Fecha_Seguimiento: fecha,
+            DNI_Paciente: paciente.dni,
+            Nombre_Paciente: paciente.nombre,
+            Profesional_Apellido_Nombre: profesional.nombre,
+            Profesional_Matricula: profesional.matricula,
+            Observacion_Profesional: observacionProfesional,
+            Links_PDFs: JSON.stringify(pdfLinks)
+        };
+
+        if (evaluaciones && evaluaciones.length > 0) {
+            evaluaciones.forEach(eva=> {
+                let motivoOriginal = eva.motivo;
+                let motivoParaColumna = motivoOriginal;
+
+                motivoParaColumna = motivoParaColumna.replace(/\s*\([^)]*\)\s*/g, ' ');
+                motivoParaColumna = motivoParaColumna.replace(/\s*Se verifica\s*$/i, '');
+                motivoParaColumna = motivoParaColumna.replace(/\s*Pendiente\s*$/i, '');
+                motivoParaColumna = motivoParaColumna.replace(/\s*Riesgo Alto\s*$/i, '');
+
+                if (motivoOriginal.includes('Control Odontológico')) {
+                    motivoParaColumna = 'Control Odontologico';
+                } else if (motivoOriginal.includes('Agudeza visual')) {
+                    motivoParaColumna = 'Agudeza visual';
+                } else if (motivoOriginal.includes('Seguridad Vial')) {
+                    motivoParaColumna = 'Seguridad Vial';
+                } else if (motivoOriginal === 'IMC') {
+                    motivoParaColumna = 'IMC';
+                }
+                motivoParaColumna = motivoParaColumna.trim();
+
+                let columnaBase = motivoParaColumna;
+                columnaBase = columnaBase.replace(/\s+/g, '_');
+                columnaBase = columnaBase.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                columnaBase = columnaBase.replace(/[^\w]/g, '');
+                columnaBase = columnaBase.replace(/_+/g, '_');
+                columnaBase = columnaBase.replace(/^_|_$/g, '');
+
+                console.log(`SERVER DEBUG: Motivo original recibido: "${motivoOriginal}"`);
+                console.log(`SERVER DEBUG: Motivo normalizado (para columna): "${motivoParaColumna}"`);
+                console.log(`SERVER DEBUG: Nombre de columna sanitizado FINAL: "${columnaBase}"`);
+
+                newRow[`${columnaBase}_Calificacion`] = eval.calificacion;
+                newRow[`${columnaBase}_Observaciones`] = eval.observaciones;
+            });
+        }
+
+        await sheetSeguimiento.addRow(newRow);
+
+        console.log('SERVER: Informe de seguimiento guardado con éxito.');
+        res.json({ success: true, message: 'Informe de seguimiento guardado.' });
+
+    } catch (error) {
+        console.error('SERVER ERROR: Fallo al guardar informe de seguimiento:', error);
+        res.status(500).json({ success: false, error: 'Error interno del servidor al guardar el informe de seguimiento.', details: error.message });
+    }
+}); // <--- ESTA ES LA LLAVE DE CIERRE CORRECTA PARA LA RUTA DE SEGUIMIENTO
+// *************************************************************************
+app.post('/api/cierre/guardar', async (req, res) => {
+    const formData = req.body;
+    const profesionalName = formData['Profesional'] || 'Desconocido';
+    const dni = String(formData['DNI']).trim();
+    const fechaCierre = String(formData['Fecha_cierre_dp']).trim();
+
+    if (!doc) {
+        console.error('SERVER ERROR: Google Sheet document not initialized.');
+        return res.status(500).json({ error: 'Error interno del servidor: Base de datos no disponible.' });
+    }
+
+    if (!dni || !fechaCierre) {
+        return res.status(400).json({ success: false, error: 'DNI del paciente y Fecha de Cierre son requeridos para guardar el cierre.' });
+    }
+
+    try {
+        await doc.loadInfo();
+        const pacientesSheet = doc.sheetsByTitle['Hoja 1'];
+        
+        if (!pacientesSheet) {
+            console.error('SERVER ERROR: Hoja "Hoja 1" no encontrada. Por favor, asegúrese de que la hoja exista y se llame "Hoja 1".');
+            return res.status(500).json({ success: false, error: 'Error interno del servidor: La hoja de pacientes ("Hoja 1") no fue encontrada.' });
+        }
+
+        await pacientesSheet.loadHeaderRow();
+
+        const newRowData = {};
+        pacientesSheet.headerValues.forEach(header => {
+            newRowData[header] = formData[header] !== undefined ? String(formData[header]) : '';
+        });
+
+        // ✅ AÑADIMOS EL NOMBRE DEL PROFESIONAL Y LA FECHA
+        newRowData['Profesional'] = profesionalName;
+        newRowData['Fecha_cierre_DP'] = new Date().toLocaleDateString('es-AR');
+        
+        // ✅ AQUÍ AGREGAMOS LOS NUEVOS CAMPOS DEL FORMULARIO
+        newRowData['Cancer_mama_Eco_mamaria'] = formData['Cancer_mama_Eco_mamaria'];
+        newRowData['Observaciones_Eco_mamaria'] = formData['Observaciones_Eco_mamaria'];
+
+        newRowData['DNI'] = dni;
+        newRowData['Fecha_cierre_dp'] = fechaCierre;
+
+        await pacientesSheet.addRow(newRowData);
+
+        console.log(`SERVER: Nuevo registro de cierre guardado para DNI: ${dni} por ${profesionalName}`);
+        return res.json({ success: true, message: 'Formulario de cierre guardado exitosamente como nuevo registro.' });
+
+    } catch (error) {
+        console.error('SERVER ERROR: Fallo al guardar el formulario de cierre:', error);
+        res.status(500).json({ success: false, error: 'Error interno del servidor al guardar el formulario de cierre.', details: error.message });
+    }
+});
+app.post('/guardar-consulta', async (req, res) => {
+    console.log('Datos recibidos del cliente:', req.body);
+
+    const profesionalNombre = req.body['Profesional'] || 'Desconocido';
+
+    console.log('Solicitud para guardar consulta recibida por el profesional:', profesionalNombre);
+
+    const { 
+        DNI, 
+        Nombre, 
+        Apellido, 
+        Edad, 
+        Sexo, 
+        'motivo de consulta': motivoConsulta, 
+        diagnostico, 
+        indicaciones, 
+        recordatorio 
+    } = req.body;
+
+    if (!DNI || !profesionalNombre) {
+        return res.status(400).json({ success: false, message: 'Faltan datos obligatorios (DNI o Profesional).' });
+    }
+
+    try {
+        // ✅ CLAVE: Usamos la variable 'doc' que ya está inicializada globalmente.
+        // Las siguientes dos líneas son ELIMINADAS porque son la causa del error.
+        // const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID, jwt);
+        // await doc.useServiceAccountAuth(jwt);
+
+        await doc.loadInfo();
+
+        const sheetTitle = 'Consultas';
+        let sheet = doc.sheetsByTitle[sheetTitle];
+
+        if (!sheet) {
+            console.log(`La hoja "${sheetTitle}" no existe. Creándola...`);
+            sheet = await doc.addSheet({
+                title: sheetTitle,
+                headerValues: ['DNI', 'Nombre', 'Apellido', 'Edad', 'Sexo', 'Motivo de consulta', 'Diagnóstico', 'Indicaciones', 'Recordatorio', 'Profesional', 'Fecha'],
+            });
+        }
+        
+        await sheet.addRow({
+            'DNI': DNI,
+            'Nombre': Nombre,
+            'Apellido': Apellido,
+            'Edad': Edad,
+            'Sexo': Sexo,
+            'Motivo de consulta': motivoConsulta,
+            'Diagnostico': diagnostico,
+            'Indicaciones': indicaciones,
+            'Recordatorio': recordatorio,
+            'Profesional': profesionalNombre,
+            'Fecha': new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
+        });
+
+        console.log('Datos de consulta guardados con éxito.');
+        res.json({ success: true, message: 'Consulta guardada con éxito.' });
+    } catch (error) {
+        console.error('Error al guardar la consulta:', error);
+        res.status(500).json({ success: false, message: 'Error interno del servidor.' });
+    }
+});
+       // ====================================================================
+// INICIO DEL SERVIDOR
+// ====================================================================
+
+// Función que inicializa AMBOS Sheets secuencialmente
+async function initializeAllSheets() {
+    try {
+        await initializeGoogleSheet(); // Inicializa doc (Pacientes)
+        await initializeIaposSheet(); // Inicializa iaposDoc (IAPOS)
+        isSheetsReady = true;
+        console.log('✅ Ambos documentos de Google Sheets inicializados correctamente.');
+    } catch (error) {
+        console.error('❌ Error fatal al inicializar uno o ambos Google Sheets:', error.message);
+        // Propagamos el error para que el proceso de inicio se detenga
+        throw error; 
+    }
+}
+// ── Nombre del chico vs. nombre del adulto responsable (Hoja de Vida pediátrica) ──
+// Compara sin importar mayúsculas, tildes, comas ni orden de las palabras.
+function normalizarNombre(t) {
+    return String(t || '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase().replace(/[^a-zñ ]/g, ' ')
+        .split(/\s+/).filter(Boolean).sort().join(' ');
+}
+function mismoNombre(a, b) {
+    const na = normalizarNombre(a);
+    return !!na && na === normalizarNombre(b);
+}
+function nombreEsDelResponsable(menor) {
+    if (!normalizarNombre(menor.nombre_responsable)) return false;
+    return mismoNombre(`${menor.apellido || ''} ${menor.nombre || ''}`, menor.nombre_responsable) ||
+        mismoNombre(menor.apellido, menor.nombre_responsable) ||
+        mismoNombre(menor.nombre, menor.nombre_responsable);
+}
+
+// ── VERIFICAR AFILIADO IAPOS ──
+let padronPausadoHasta = 0; // corte rápido: tras una falla, 5 min sin esperar al padrón
+app.get('/verificar-afiliado/:dni', async (req, res) => {
+    const dni = req.params.dni;
+    const hoy = new Date().toISOString().split('T')[0];
+    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
+    <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+        <soap:Body>
+            <BEWsValidaAfi.Execute xmlns="IAPOS_WS">
+                <Usuario>CONSULTAPDP</Usuario>
+                <Passwd>1Qaz</Passwd>
+                <Nafiliado>${dni}</Nafiliado>
+                <Badocnumdo>${dni}</Badocnumdo>
+                <Tidocodigo_de_documento>96</Tidocodigo_de_documento>
+                <Ogorcodigo>1</Ogorcodigo>
+                <Fechpresta>${hoy}</Fechpresta>
+            </BEWsValidaAfi.Execute>
+        </soap:Body>
+    </soap:Envelope>`;
+    // Si el padrón falló hace poco, no lo esperamos de nuevo (corte rápido)
+    try {
+        if (Date.now() < padronPausadoHasta) throw new Error('Padrón IAPOS en pausa por falla reciente');
+        const response = await axios.post(
+            'https://aswe.santafe.gov.ar/iapos-sw-srvt/servlet/abewsvalidaafi',
+            soapBody,
+            {
+                headers: {
+                    'Content-Type': 'text/xml; charset=utf-8',
+                    'SOAPAction': 'IAPOS_WSaction/ABEWSVALIDAAFI.Execute'
+                },
+                timeout: 4000
+            }
+        );
+        const xml = response.data;
+        const get = (tag) => {
+            const m = xml.match(new RegExp(`<${tag}[^>]*>([^<]*)<\/${tag}>`));
+            return m ? m[1].trim() : null;
+        };
+        const estado = get('Estado');
+        res.json({
+            esActivo: estado === 'A',
+            estado,
+            nombre: get('Apenom'),
+            edad: get('Edad'),
+            sexo: get('Sexo'),
+            localidad: get('Localidad'),
+            mensaje: get('Msgdsc')
+        });
+    } catch(e) {
+        // El padrón de IAPOS no respondió: NO trabamos al pediatra.
+        // Se continúa con los datos propios (hoja de vida pediátrica / adultos),
+        // igual que el parche de hoja de vida y el cierre de adultos.
+        console.error('Error IAPOS (pediatría):', e.message);
+        if (!String(e.message).includes('en pausa')) padronPausadoHasta = Date.now() + 5 * 60 * 1000;
+        let propio = null;
+        try {
+            const [{ data: menores }, { data: adulto }] = await Promise.all([
+                supabase.from('afiliados_menores')
+                    .select('apellido, nombre, edad, fecha_nacimiento, sexo_biologico, nombre_responsable')
+                    .eq('dni', dni).order('fecha_carga', { ascending: false }).limit(1),
+                supabase.from('afiliados')
+                    .select('apellido, nombre, edad, fecha_nacimiento, sexo_biologico')
+                    .eq('dni', dni).maybeSingle(),
+            ]);
+            propio = (menores || [])[0] || adulto || null;
+
+            // Si en la Hoja de Vida pediátrica el adulto puso SU nombre en los
+            // campos del chico, no se autocompleta con el nombre de la
+            // madre/padre: se usa el de sus prácticas autorizadas. (nov-2026)
+            const menor = (menores || [])[0];
+            if (menor && !adulto && nombreEsDelResponsable(menor)) {
+                const { data: pracs } = await supabase.from('practicas_autorizadas')
+                    .select('nombre_completo')
+                    .eq('dni', dni)
+                    .not('nombre_completo', 'is', null)
+                    .neq('nombre_completo', '')
+                    .order('fecha_autorizacion', { ascending: false })
+                    .limit(10);
+                const real = (pracs || []).map(p => String(p.nombre_completo || '').trim())
+                    .find(n => n && !mismoNombre(n, menor.nombre_responsable));
+                propio = real
+                    ? { ...menor, apellido: real.includes(',') ? real.split(',')[0].trim() : real, nombre: real.includes(',') ? real.split(',').slice(1).join(',').trim() : '' }
+                    : { ...menor, apellido: '', nombre: '' }; // mejor vacío que el nombre del adulto
+            }
+        } catch (e2) {
+            console.error('Error buscando datos propios (pediatría):', e2.message);
+        }
+        let edad = propio?.edad != null && propio.edad !== '' ? String(propio.edad) : null;
+        if (propio?.fecha_nacimiento) {
+            const fn = new Date(String(propio.fecha_nacimiento).slice(0, 10) + 'T00:00:00');
+            if (!isNaN(fn)) {
+                const h = new Date();
+                let ed = h.getFullYear() - fn.getFullYear();
+                if (h.getMonth() < fn.getMonth() || (h.getMonth() === fn.getMonth() && h.getDate() < fn.getDate())) ed--;
+                if (ed >= 0 && ed <= 115) edad = String(ed);
+            }
+        }
+        const sexoBio = String(propio?.sexo_biologico || '').toLowerCase();
+        const nombre = propio
+            ? `${propio.apellido || ''}, ${propio.nombre || ''}`.replace(/^, |, $/g, '').trim() || null
+            : null;
+        res.json({
+            esActivo: true,
+            padronCaido: true,
+            estado: null,
+            nombre,
+            edad,
+            sexo: sexoBio.startsWith('f') ? 'F' : sexoBio.startsWith('m') ? 'M' : null,
+            localidad: null,
+            mensaje: 'No se pudo verificar el padrón de IAPOS en este momento. Se continúa con los datos del sistema.'
+        });
+    }
+});
+// ── ALERTAS CLÍNICAS ──
+app.get('/alertas-clinicas/:dni', async (req, res) => {
+    const { dni } = req.params;
+    try {
+        const { data: afiliado } = await supabase
+            .from('afiliados').select('*').eq('dni', dni).single();
+
+        let menor = null;
+        if (!afiliado) {
+            const { data: afiliadoMenor } = await supabase
+                .from('afiliados_menores')
+                .select('*')
+                .eq('dni', dni)
+                .order('fecha_carga', { ascending: false })
+                .limit(1)
+                .single();
+            menor = afiliadoMenor || null;
+        }
+
+        const { data: ultimoDP } = await supabase
+            .from('historial_dia_preventivo').select('*')
+            .eq('dni', dni).order('fechax', { ascending: false }).limit(1).single();
+
+        const alertas = [];
+
+        if (afiliado) {
+            if (afiliado?.hipertension === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara hipertensión en hoja de vida' });
+            if (afiliado?.diabetes === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara diabetes en hoja de vida' });
+            if (afiliado?.colesterol === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Declara colesterol alto en hoja de vida' });
+            if (afiliado?.fuma && afiliado.fuma !== 'nunca')
+                alertas.push({ tipo: 'INFO', mensaje: `ℹ️ Fumador declarado: ${afiliado.fuma}` });
+        } else if (menor) {
+            if (menor.fam_hipertension === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de hipertensión' });
+            if (menor.fam_diabetes === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de diabetes' });
+            if (menor.fam_obesidad === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de obesidad' });
+            if (menor.fam_cardio === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar cardiovascular' });
+            if (menor.fam_mental === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de salud mental' });
+            if (menor.fam_adicciones === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de adicciones' });
+            if (menor.fam_cancer === 'si')
+                alertas.push({ tipo: 'INFO', mensaje: 'ℹ️ Antecedente familiar de cáncer' });
+            if (menor.tabaco === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Consume o ha consumido tabaco' });
+            if (menor.alcohol === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Consume o ha consumido alcohol' });
+            if (menor.sustancias === 'si')
+                alertas.push({ tipo: 'URGENTE', mensaje: '🔴 Consume o ha consumido otras sustancias' });
+            if (menor.violencia === 'si')
+                alertas.push({ tipo: 'URGENTE', mensaje: '🔴 Refiere situaciones de violencia o abuso' });
+            if (menor.tristeza === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Episodios de tristeza/aislamiento prolongados' });
+            if (menor.alim_trastorno === 'si')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Preocupación por peso/alimentación' });
+            if (menor.vacunas === 'no')
+                alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Vacunas del calendario no están al día' });
+            if (menor.condicion_salud === 'si')
+                alertas.push({ tipo: 'URGENTE', mensaje: `🔴 Condición de salud diagnosticada${menor.condicion_detalle ? ': ' + menor.condicion_detalle : ''}` });
+        }
+
+        if (ultimoDP?.presion_arterial === 'Hipertensión')
+            alertas.push({ tipo: 'RIESGO', mensaje: '⚠️ Hipertensión registrada en DP anterior' });
+
+        // ── BLOQUEO POR CIERRE RECIENTE (menos de 1 año) ──
+        // Mismo criterio que en el cierre de adultos — acá faltaba por
+        // completo, lo que permitía cerrar el mismo paciente pediátrico
+        // varias veces sin ningún aviso.
+        let bloqueoCierreAnual = null;
+        const { data: modulosPrevios } = await supabase
+            .from('practicas_autorizadas')
+            .select('fecha_carga')
+            .eq('dni', dni)
+            .eq('descripcion_practica', 'Módulo Día Preventivo')
+            .eq('estado', 'REALIZADA')
+            .not('fecha_carga', 'is', null)
+            .order('fecha_carga', { ascending: false })
+            .limit(1);
+
+        if (modulosPrevios && modulosPrevios.length > 0) {
+            const fechaUltimoCierre = new Date(modulosPrevios[0].fecha_carga);
+            const diasDesdeUltimoCierre = Math.floor(
+                (Date.now() - fechaUltimoCierre.getTime()) / (1000 * 60 * 60 * 24)
+            );
+            if (diasDesdeUltimoCierre < 365) {
+                bloqueoCierreAnual = {
+                    bloqueado: true,
+                    fechaUltimoCierre: fechaUltimoCierre.toISOString().split('T')[0],
+                    diasRestantes: 365 - diasDesdeUltimoCierre,
+                };
+            }
+        }
+
+        let bloqueoHojaDeVida = null;
+        try {
+            bloqueoHojaDeVida = await controlHojaDeVidaPediatrica(dni);
+        } catch (eHv) {
+            console.error('No se pudo verificar la hoja de vida pediátrica:', eHv.message);
+        }
+
+        res.json({ success: true, afiliado: afiliado || menor || null, alertas, bloqueoCierreAnual, bloqueoHojaDeVida });
+    } catch(e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+// --- NUEVO ARRANQUE DIRECTO (Solo Pediatría) ---
+// Arrancamos el servidor sin esperar a la hoja de cálculo vieja
+// Mismo endpoint /obtener-estudios-paciente que ya usa (y funciona bien
+// en) el formulario de adultos — lee Laboratorio, Odontología y
+// Enfermería directo de Supabase, sin depender de las hojas viejas de
+// Google Sheets que dejaron de actualizarse.
+registrarEndpointObtenerEstudios(app, supabase);
+
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor iniciado en puerto ${PORT} (Modo Pediatría - Sin conexión a Hoja Adultos)`);
+});
